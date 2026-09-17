@@ -1,0 +1,42 @@
+# Environment files
+
+.env
+.env.*
+!.env.example
+
+# Claude local settings
+.claude/settings.local.json
+
+# Python virtual environments
+
+.venv/
+.venv-build/
+venv/
+env/
+
+# Python cache
+
+**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Superpowers / local process memory
+
+.remember/
+docs/superpowers/
+.superpowers/
+
+# Temp and log files
+
+*.log
+*.tmp
+
+# OS / editor files
+
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
