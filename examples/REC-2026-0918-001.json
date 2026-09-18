@@ -1,0 +1,14 @@
+{
+  "schema_version": "0.1.0",
+  "record_id": "REC-2026-0918-001",
+  "origin": "simulated",
+  "device": {
+    "model": "MPC5554"
+  },
+  "test": {
+    "id": "PBIT-DSPI-C-0007",
+    "target": "DSPI_C",
+    "name": "DSPI_C 回环自检",
+    "result": "fail"
+  }
+}

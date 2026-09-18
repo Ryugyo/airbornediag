@@ -8,6 +8,8 @@
 
 已建立可安装的 Python 包与命令行入口，可执行 `airbornediag --help` 和 `airbornediag --version`。安装与最小测试已在 Windows 和 RDC300I（Linux ARM64，Python 3.9.9）的独立虚拟环境中验证通过，环境配置与板端离线安装步骤见 [docs/development.md](docs/development.md)。
 
+已定义故障记录与诊断报告的输入输出契约（格式版本 0.1.0），以 JSON Schema 声明字段约束并实际执行校验，并给出首批诊断场景（MPC5554 的 FlexCAN2 与 DSPI）及对应示例。**契约、Schema、示例与校验已建立，寄存器解析与诊断规则尚未实现。**
+
 首版聚焦 **MPC5554、TMS320F28335 等机载控制器设备 MCU 的片上资源及外设故障**，采用自主设计的 JSON 故障记录验证完整诊断流程，后续逐步接入实际控制器数据。
 
 ## 首版目标
@@ -38,6 +40,8 @@
 ## 文档
 
 * [docs/architecture.md](docs/architecture.md)：模块职责、核心数据流与关键边界。
+* [docs/contracts.md](docs/contracts.md)：输入输出字段语义、缺失值约定与格式版本规则。
+* [docs/scenarios.md](docs/scenarios.md)：首批诊断场景、判据依据与支持范围。
 * [docs/development.md](docs/development.md)：环境配置、安装、运行、测试及板端部署步骤。
 
 ## 开发管理

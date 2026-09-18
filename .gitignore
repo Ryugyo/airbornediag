@@ -24,6 +24,11 @@ dist/
 
 wheelhouse/
 
+# 原始芯片资料 PDF（体积较大，按 docs/architecture.md 不随代码提交）
+# 来源登记表 knowledge/source-registry.json 正常提交，不受本规则影响
+
+/knowledge/sources/
+
 # Python cache
 
 **/__pycache__/

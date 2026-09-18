@@ -1,0 +1,209 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AirborneDiag 诊断报告（输出契约）",
+  "description": "格式版本 0.1.0。顶层为完整报告：device、test、observations 由主程序按输入记录的字段值保留，模型不得改写；analysis 为分析结论。字段语义与兼容性规则见 docs/contracts.md。",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "report_id",
+    "record_ref",
+    "provenance",
+    "device",
+    "test",
+    "observations",
+    "analysis"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "report_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "record_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "对应的输入记录 record_id。"
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["input_origin", "report_status"],
+      "properties": {
+        "input_origin": {
+          "enum": ["simulated", "manual_capture", "device_log"],
+          "description": "与输入记录的 origin 一致。"
+        },
+        "report_status": {
+          "enum": ["expected", "actual"],
+          "description": "actual 表示工具实际产出；expected 表示设计预期示例，不是工具运行结果。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "device": {
+      "$ref": "fault-record.schema.json#/$defs/device"
+    },
+    "test": {
+      "$ref": "fault-record.schema.json#/$defs/test"
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "$ref": "fault-record.schema.json#/$defs/observation"
+      },
+      "description": "由主程序保留的输入观测。输入缺省 observations 时此处为已解析出的空数组。"
+    },
+    "analysis": {
+      "type": "object",
+      "required": [
+        "fault_state",
+        "root_cause",
+        "confirmed_states",
+        "candidate_causes",
+        "inconsistencies",
+        "insufficient_data",
+        "recommended_checks"
+      ],
+      "properties": {
+        "fault_state": {
+          "enum": ["confirmed", "not_determined"],
+          "description": "是否存在由手册判据确认的外设故障状态。与 test.result 是否为 fail 无关。"
+        },
+        "root_cause": {
+          "enum": ["candidates_only", "not_determined"],
+          "description": "根因判定层级。首版不开放 confirmed，待建立已确认根因的结构后再增加。"
+        },
+        "confirmed_states": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/confirmed_state" },
+          "description": "规则确认的状态。只有前提已满足的结论才能进入本数组。"
+        },
+        "candidate_causes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/candidate_cause" },
+          "description": "待验证的候选原因。"
+        },
+        "inconsistencies": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/inconsistency" },
+          "description": "输入中自相矛盾之处。"
+        },
+        "insufficient_data": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/insufficient_item" },
+          "description": "缺失信息及其导致的不可判定。所有缺失信息集中在此，不出现在其他字段。"
+        },
+        "recommended_checks": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "后续检查建议，含无案例证据支持的通用排查项。"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "basis": {
+      "type": "object",
+      "required": ["source", "locator"],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "文献来源标识，须存在于 knowledge/source-registry.json 的 sources[].id。"
+        },
+        "locator": {
+          "type": "string",
+          "minLength": 1,
+          "description": "章节、表或图编号，例如 22.3.3.5 或 22.3.3.6, Table 22-11。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "confirmed_state": {
+      "type": "object",
+      "required": ["id", "statement", "evidence", "basis"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "statement": {
+          "type": "string",
+          "minLength": 1,
+          "description": "结论必须自带适用边界，把不可推出的内容写进语句本身。"
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "引用的观测 id，须存在于本报告 observations 中。"
+        },
+        "basis": { "$ref": "#/$defs/basis" }
+      },
+      "additionalProperties": false
+    },
+    "candidate_cause": {
+      "type": "object",
+      "required": ["id", "statement", "supporting", "contradicting"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "statement": {
+          "type": "string",
+          "minLength": 1
+        },
+        "supporting": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "引用的观测 id。首版不引用其他结论或候选原因，避免多层交叉引用。"
+        },
+        "contradicting": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": false
+    },
+    "inconsistency": {
+      "type": "object",
+      "required": ["id", "statement", "evidence"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "statement": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": false
+    },
+    "insufficient_item": {
+      "type": "object",
+      "required": ["missing", "reason"],
+      "properties": {
+        "missing": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "该信息为何影响判断，以及缺少它导致哪些内容无法判定。"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

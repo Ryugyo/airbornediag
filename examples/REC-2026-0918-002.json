@@ -1,0 +1,109 @@
+{
+  "schema_version": "0.1.0",
+  "record_id": "REC-2026-0918-002",
+  "origin": "simulated",
+  "captured_at": "2026-09-18T14:32:05+08:00",
+  "device": {
+    "model": "MPC5554"
+  },
+  "test": {
+    "id": "PBIT-CAN-A-0021",
+    "target": "CAN_A",
+    "name": "CAN_A 总线通信自检",
+    "result": "fail"
+  },
+  "observations": [
+    {
+      "id": "OBS-1",
+      "kind": "register",
+      "target": "CAN_A",
+      "at": "2026-09-18T14:32:05.120+08:00",
+      "capture_id": "CAP-ECR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_A.ECR",
+      "fields": {
+        "TXECTR": 96,
+        "RXECTR": 0
+      }
+    },
+    {
+      "id": "OBS-2",
+      "kind": "register",
+      "target": "CAN_A",
+      "at": "2026-09-18T14:32:05.123+08:00",
+      "capture_id": "CAP-ESR-1",
+      "semantics": "since_last_read",
+      "register": "CAN_A.ESR",
+      "fields": {
+        "BIT1ERR": 0,
+        "BIT0ERR": 0,
+        "ACKERR": 1,
+        "CRCERR": 0,
+        "FRMERR": 0,
+        "STFERR": 1
+      }
+    },
+    {
+      "id": "OBS-3",
+      "kind": "register",
+      "target": "CAN_A",
+      "at": "2026-09-18T14:32:05.123+08:00",
+      "capture_id": "CAP-ESR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_A.ESR",
+      "fields": {
+        "FLTCONF": "bus_off",
+        "TXWRN": 1,
+        "RXWRN": 0,
+        "IDLE": 1,
+        "TXRX": 0,
+        "BOFFINT": 1
+      }
+    },
+    {
+      "id": "OBS-4",
+      "kind": "register",
+      "target": "CAN_A",
+      "at": "2026-09-18T14:32:05.126+08:00",
+      "capture_id": "CAP-CR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_A.CR",
+      "fields": {
+        "LOM": 0,
+        "BOFFMSK": 1,
+        "BOFFREC": 1
+      }
+    },
+    {
+      "id": "OBS-5",
+      "kind": "can_frame",
+      "target": "CAN_A",
+      "at": "2026-09-18T14:32:05.500+08:00",
+      "direction": "tx",
+      "identifier": "0x18F00400",
+      "identifier_format": "extended",
+      "dlc": 8,
+      "acknowledged": false
+    },
+    {
+      "id": "OBS-6",
+      "kind": "can_frame",
+      "target": "CAN_A",
+      "at": "2026-09-18T14:32:05.640+08:00",
+      "direction": "tx",
+      "identifier": "0x18F00400",
+      "identifier_format": "extended",
+      "dlc": 8,
+      "acknowledged": false
+    },
+    {
+      "id": "OBS-7",
+      "kind": "timeout",
+      "target": "CAN_A",
+      "at": "2026-09-18T14:32:05.700+08:00",
+      "waiting_for": "CAN_A 报文发送完成",
+      "limit_ms": 100,
+      "elapsed_ms": 500
+    }
+  ]
+}
