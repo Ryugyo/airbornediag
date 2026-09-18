@@ -52,7 +52,7 @@ python3.9 -m venv .venv
 | 仓库外目录执行 | 退出码 0，确认命令来自安装而非当前目录 |
 | `python -m pytest` | 4 passed |
 
-Windows 侧解释器为 3.9.25，板端为 3.9.9，次版本一致、补丁版本不同，板端验证不可省略。
+Windows 侧解释器为 3.9.25，板端为 3.9.9，次版本一致、补丁版本不同；两端各自独立验证，板端记录见下文。
 
 ## 命令行使用
 
@@ -88,28 +88,50 @@ airbornediag --version
 
 - 系统 Python 3.9.9 可创建独立 venv，venv 内 Python 为 3.9.9，pip 21.3.1 可运行。
 - SQLite 3.37.2 的 FTS5 可用（后续知识检索需要）。
+- **板端无互联网**，不能通过 pip 在线下载依赖，安装必须使用离线 wheel 包。
 
-### 步骤（未验证）
+### 离线 wheel 包（wheelhouse/）
+
+板端不能联网，因此在本机（可联网的 Windows）预先下载全部依赖到工程根目录的 `wheelhouse/`，随源码一起复制到板端。
+
+`wheelhouse/` 由 `pyproject.toml` 声明的依赖解析得到，下载命令（在本机工程根目录、使用 3.9 解释器执行）：
+
+```bash
+python -m pip download -d wheelhouse --only-binary=:all: \
+  --platform manylinux2014_aarch64 --python-version 3.9 --implementation cp --abi cp39 \
+  "setuptools>=64" "pytest>=7.0" pip wheel
+```
+
+内容（11 个 wheel，约 4.5 MB，**全部为纯 Python wheel**，无平台专用二进制）：
+
+| 包 | 版本 | 用途 |
+|---|---|---|
+| setuptools | 82.0.1 | 构建后端（`pyproject.toml` 的 `build-system.requires`） |
+| pytest | 8.4.2 | 开发依赖（`.[dev]`） |
+| iniconfig / packaging / pluggy / pygments / tomli / exceptiongroup / typing_extensions | — | pytest 的传递依赖 |
+| pip | 26.0.1 | 备用：需要时在 venv 内升级 pip |
+| wheel | 0.48.0 | 备用：`--no-build-isolation` 路径需要 |
+
+`colorama` 未包含：它是 pytest 在 `sys_platform == "win32"` 下的依赖，Linux 端 pip 不会请求。
+
+下载时的注意事项：pip 的 `--platform` 只影响 wheel 标签选择，**环境标记仍按当前解释器判定**。因此在本机（Windows）执行下载会把 `colorama` 一并拉入，需要人工剔除；`python_version` 类标记（`tomli`、`exceptiongroup`）因本机使用 3.9 与板端一致，无需处理。
+
+### 离线安装步骤（已在板端验证）
 
 不要把 Windows 的 `.venv` 复制到板端：其中的可执行文件与 `.pth` 含 Windows 绝对路径，必须在板端重新创建。
 
-1. 迁移源代码（仅源码，不含 `.venv/`、`__pycache__/`、`*.egg-info/`、`.pytest_cache/`）：
+1. 迁移源码与 wheel 包到板端并进入工程根目录。只需复制源码和 `wheelhouse/`，不要复制 `.venv/`、`__pycache__/`、`*.egg-info/`、`.pytest_cache/`、`build/`。
 
-   ```bash
-   git clone <仓库地址> airbornediag   # 或 rsync/scp 源码目录
-   cd airbornediag
-   ```
-
-2. 在工程根目录建立独立环境：
+2. 建立独立环境：
 
    ```bash
    python3 -m venv .venv
    ```
 
-3. 安装工程与开发依赖：
+3. 离线安装工程与开发依赖：
 
    ```bash
-   .venv/bin/python -m pip install -e ".[dev]"
+   .venv/bin/python -m pip install --no-index --find-links=wheelhouse -e ".[dev]"
    ```
 
 4. 执行与 Windows 相同的验证：
@@ -122,18 +144,47 @@ airbornediag --version
 
 以上步骤均在板端 venv 内进行，不修改系统 Python、MindIE 容器或 CANN 环境。
 
-### 已知风险与备用方案（未验证）
+### 验证记录（RDC300I，已执行）
 
-- **pip 版本较旧**：板端 venv 内 pip 为 21.3.1，可编辑安装（PEP 660）是 pip 21.3 才引入的能力，且构建隔离需要从索引获取 `setuptools>=64`。若第 3 步失败，先在 venv 内单独升级 pip（只影响该 venv）：`.venv/bin/python -m pip install --upgrade pip setuptools wheel`，再重试。
-- **可编辑安装不可用**：备用方案是改为普通安装 `.venv/bin/python -m pip install ".[dev]"`。该方式在 Windows 的新建虚拟环境中已验证可用（`airbornediag --version` 退出码 0，`import airbornediag` 正常），但未在板端验证。代价是修改源码后需要重新安装。
-- **索引不可达**：若板端无法访问 PyPI 或内网镜像，则安装无法获取构建后端与 pytest。此时需要离线 wheel 方案（需确认板端可用的镜像或离线包来源），本任务未设计该方案。
+| 项 | 结果 |
+|---|---|
+| 环境 | RDC300I（Linux ARM64），Python 3.9.9 |
+| 虚拟环境 | 沿用此前已建立的独立 venv，本次未重建（第 2 步的创建方式此前已单独验证） |
+| 离线安装 | 第 3 步命令执行成功 |
+| `airbornediag --help` | 正常 |
+| `airbornediag --version` | 正常 |
+| `python -m pytest -v` | 全部通过 |
+
+本次使用的是上面的默认安装命令，未执行 `--upgrade pip`、`--no-build-isolation` 或普通安装等备用方案。
+
+板端已安装依赖的版本清单本次未收集，本文因此不记录板端实际安装的版本；安装来源为 `wheelhouse/`，其中包含的版本见上文表格。
+
+本记录仅覆盖安装、命令行入口与最小测试的可运行性。诊断功能尚未实现，MindIE 接入、故障 JSON、知识库与诊断结论均不在本次验证范围内。
+
+### 备用方案（未验证）
+
+- **可编辑安装失败**（板端 pip 为 21.3.1，可编辑安装依赖 PEP 660，是 pip 21.3 才引入的能力）：改为先安装构建后端，再关闭构建隔离重试。
+
+  ```bash
+  .venv/bin/python -m pip install --no-index --find-links=wheelhouse --upgrade pip setuptools wheel
+  .venv/bin/python -m pip install --no-index --find-links=wheelhouse --no-build-isolation -e ".[dev]"
+  ```
+
+- **仍无法安装**：改为普通（非可编辑）安装 `.venv/bin/python -m pip install --no-index --find-links=wheelhouse ".[dev]"`。该方式在 Windows 的新建虚拟环境中已验证可用（`airbornediag --version` 退出码 0，`import airbornediag` 正常），但未在板端验证。代价是修改源码后需要重新安装。
 - **输出编码**：`--help` 文本含中文。Linux 下 Python 3.9 通常会自动做 locale 强制转换；若板端 `locale` 为非 UTF-8 且中文输出异常，使用 `PYTHONIOENCODING=utf-8`。
 
 ## 未验证项
 
-以下内容在本任务结束时**尚未在 RDC300I 上执行**，不得视为通过：
+以下内容**尚未验证**，不得视为通过：
 
-- 板端依赖下载与 `pip install -e ".[dev]"`；
-- 板端 `airbornediag --help` 与 `--version` 的实际输出与退出码；
-- 板端 `pytest` 执行结果；
-- 上述"已知风险与备用方案"中的所有分支。
+- "备用方案"中的所有分支：板端升级 pip、`--no-build-isolation` 安装、普通（非可编辑）安装；
+- 板端 locale 非 UTF-8 时的中文输出处理；
+- 板端已安装依赖的具体版本（本次未收集）。
+
+本次已验证的范围仅限于：Python 包在 Windows 与 RDC300I 上的安装、命令行 `--help`/`--version` 的输出与退出码、最小测试执行。
+
+以下内容**不在本次验证范围内**，不能由本次结果推断为通过：
+
+- MindIE 接入与模型调用；
+- 故障 JSON、诊断流程、知识库与诊断结论的正确性；
+- 板端系统 Python、MindIE 容器与 CANN 环境的行为（本工程未修改这些环境）。

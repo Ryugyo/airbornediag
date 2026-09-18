@@ -20,6 +20,10 @@ build/
 dist/
 *.egg-info/
 
+# 离线安装用 wheel 包（体积较大，按 docs/development.md 的步骤在本地重新生成）
+
+wheelhouse/
+
 # Python cache
 
 **/__pycache__/

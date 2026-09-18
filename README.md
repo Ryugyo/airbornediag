@@ -6,7 +6,7 @@
 
 项目处于初始化阶段，诊断功能尚在开发中。
 
-已建立可安装的 Python 包与命令行入口，可执行 `airbornediag --help` 和 `airbornediag --version`，并在 Windows 独立虚拟环境中完成安装与测试验证。
+已建立可安装的 Python 包与命令行入口，可执行 `airbornediag --help` 和 `airbornediag --version`。安装与最小测试已在 Windows 和 RDC300I（Linux ARM64，Python 3.9.9）的独立虚拟环境中验证通过，环境配置与板端离线安装步骤见 [docs/development.md](docs/development.md)。
 
 首版聚焦 **MPC5554、TMS320F28335 等机载控制器设备 MCU 的片上资源及外设故障**，采用自主设计的 JSON 故障记录验证完整诊断流程，后续逐步接入实际控制器数据。
 
