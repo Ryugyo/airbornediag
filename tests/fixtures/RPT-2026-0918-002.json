@@ -1,0 +1,188 @@
+{
+  "schema_version": "0.1.0",
+  "report_id": "RPT-2026-0918-002",
+  "record_ref": "REC-2026-0918-002",
+  "provenance": {
+    "input_origin": "simulated",
+    "report_status": "expected"
+  },
+  "device": {
+    "model": "MPC5554"
+  },
+  "test": {
+    "id": "PBIT-CAN-A-0021",
+    "target": "CAN_A",
+    "name": "CAN_A 总线通信自检",
+    "result": "fail"
+  },
+  "observations": [
+    {
+      "id": "OBS-1",
+      "kind": "register",
+      "target": "CAN_A",
+      "at": "2026-09-18T14:32:05.120+08:00",
+      "capture_id": "CAP-ECR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_A.ECR",
+      "fields": {
+        "TXECTR": 96,
+        "RXECTR": 0
+      }
+    },
+    {
+      "id": "OBS-2",
+      "kind": "register",
+      "target": "CAN_A",
+      "at": "2026-09-18T14:32:05.123+08:00",
+      "capture_id": "CAP-ESR-1",
+      "semantics": "since_last_read",
+      "register": "CAN_A.ESR",
+      "fields": {
+        "BIT1ERR": 0,
+        "BIT0ERR": 0,
+        "ACKERR": 1,
+        "CRCERR": 0,
+        "FRMERR": 0,
+        "STFERR": 1
+      }
+    },
+    {
+      "id": "OBS-3",
+      "kind": "register",
+      "target": "CAN_A",
+      "at": "2026-09-18T14:32:05.123+08:00",
+      "capture_id": "CAP-ESR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_A.ESR",
+      "fields": {
+        "FLTCONF": "bus_off",
+        "TXWRN": 1,
+        "RXWRN": 0,
+        "IDLE": 1,
+        "TXRX": 0,
+        "BOFFINT": 1
+      }
+    },
+    {
+      "id": "OBS-4",
+      "kind": "register",
+      "target": "CAN_A",
+      "at": "2026-09-18T14:32:05.126+08:00",
+      "capture_id": "CAP-CR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_A.CR",
+      "fields": {
+        "LOM": 0,
+        "BOFFMSK": 1,
+        "BOFFREC": 1
+      }
+    },
+    {
+      "id": "OBS-5",
+      "kind": "can_frame",
+      "target": "CAN_A",
+      "at": "2026-09-18T14:32:05.500+08:00",
+      "direction": "tx",
+      "identifier": "0x18F00400",
+      "identifier_format": "extended",
+      "dlc": 8,
+      "acknowledged": false
+    },
+    {
+      "id": "OBS-6",
+      "kind": "can_frame",
+      "target": "CAN_A",
+      "at": "2026-09-18T14:32:05.640+08:00",
+      "direction": "tx",
+      "identifier": "0x18F00400",
+      "identifier_format": "extended",
+      "dlc": 8,
+      "acknowledged": false
+    },
+    {
+      "id": "OBS-7",
+      "kind": "timeout",
+      "target": "CAN_A",
+      "at": "2026-09-18T14:32:05.700+08:00",
+      "waiting_for": "CAN_A 报文发送完成",
+      "limit_ms": 100,
+      "elapsed_ms": 500
+    }
+  ],
+  "analysis": {
+    "fault_state": "confirmed",
+    "root_cause": "candidates_only",
+    "confirmed_states": [
+      {
+        "id": "CS-1",
+        "statement": "采集时刻 CAN_A 处于总线关闭（bus off）状态。本结论只描述该时刻的故障封闭状态，不说明总线关闭发生的时刻，也不说明进入总线关闭前累计的错误类型分布。",
+        "evidence": ["OBS-3"],
+        "basis": {
+          "source": "MPC5554_RM",
+          "locator": "22.3.3.6, Figure 22-8, Table 22-11"
+        }
+      },
+      {
+        "id": "CS-2",
+        "statement": "在 CAN_A.CR 的 BOFFREC 位为 1 期间，模块不会自动从总线关闭恢复，将保持该状态直至该位被清除。本结论只描述该配置位的作用，不说明总线关闭的成因，也不判断该配置是设计意图还是配置错误。",
+        "evidence": ["OBS-4"],
+        "basis": {
+          "source": "MPC5554_RM",
+          "locator": "22.3.3.2, Table 22-8"
+        }
+      },
+      {
+        "id": "CS-3",
+        "statement": "进入总线关闭前的错误累积不可能仅来自无其他节点应答（ACK 错误）。本结论只排除错误源仅为无应答的情形，不排除总线上只有一个节点：单节点总线若同时存在位错误或填充错误等其他错误源，仍可能进入总线关闭；本结论也不判断异常位于 CAN_A 本节点还是总线上的其他节点。",
+        "evidence": ["OBS-3"],
+        "basis": {
+          "source": "MPC5554_RM",
+          "locator": "22.3.3.5"
+        }
+      }
+    ],
+    "candidate_causes": [
+      {
+        "id": "CC-1",
+        "statement": "CAN 总线物理层异常，例如差分线短路或开路、终端电阻缺失或阻值失配",
+        "supporting": ["OBS-2", "OBS-3"],
+        "contradicting": []
+      },
+      {
+        "id": "CC-2",
+        "statement": "CAN_A 与总线上其他节点的位定时配置不一致，例如波特率或采样点不匹配",
+        "supporting": ["OBS-2", "OBS-3"],
+        "contradicting": []
+      }
+    ],
+    "inconsistencies": [],
+    "insufficient_data": [
+      {
+        "missing": "总线电气测量，包括差分电平、终端电阻与总线波形",
+        "reason": "手册 22.3.3.5 与 22.3.3.6 只能确认总线关闭状态与错误累积路径，无法定位物理层成因，因此 CC-1 与 CC-2 之间无法区分，异常位于 CAN_A 本节点还是总线其他位置也无法判定"
+      },
+      {
+        "missing": "上一次读取 CAN_A.ESR 的时刻，即 OBS-2 的 covers_since",
+        "reason": "手册 22.3.3.6 说明 BIT1ERR 至 STFERR 为读清除位且只反映上次读取以来的情况；缺少上次读取时刻就无法确定 OBS-2 覆盖的时间范围，OBS-2 中的 ACKERR 与 STFERR 是否来自总线关闭前的错误累积无法判定"
+      },
+      {
+        "missing": "OBS-1 与 OBS-3 之间 FLTCONF 是否发生变化",
+        "reason": "OBS-1 与 OBS-3 来自不同采集动作，采集时刻相差 3 ms。手册 22.3.3.5 规定总线关闭状态下 TXECTR 表示对 11 个连续隐性位出现次数的级联计数，而非发送错误计数；要把 OBS-1 的数值用于任何判断，都需先确认两次采集之间 FLTCONF 保持为总线关闭，此前提未被观测，因此 TXECTR=96 的语义是否适用于该数值无法判定"
+      },
+      {
+        "missing": "CAN_A.CR 的位定时配置与总线约定波特率",
+        "reason": "缺少该配置则无法与总线约定比对，CC-2 是否成立无法判定"
+      }
+    ],
+    "recommended_checks": [
+      "按线束图确认终端配置后断电测量总线终端电阻；期望值须依据适用总线规范确认，本报告不给出未经核实的数值",
+      "总线空闲时测量 CAN_H 与 CAN_L 差分电平",
+      "读取 CAN_A.CR 的位定时字段 PRESDIV / PROPSEG / PSEG1 / PSEG2 / RJW 并与总线约定比对",
+      "测量总线实际位时间",
+      "在发送期间测量 CAN_TX 与 CAN_RX 引脚波形，并检查收发器供电与使能状态；该项为通用排查项，本案例无证据指向该方向",
+      "补充采集时同时记录 ECR 与 ESR 的读取时刻，以确认 TXECTR 语义的适用区间",
+      "补充采集时记录 ESR 的读取时刻，使错误标志的覆盖区间可知",
+      "清除 BOFFINT 前先完整留存 ESR 快照，避免读清除位被后续读取覆盖"
+    ]
+  }
+}

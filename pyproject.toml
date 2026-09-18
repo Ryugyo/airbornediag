@@ -8,7 +8,9 @@ dynamic = ["version"]
 description = "面向民机机载系统的智能故障诊断工程"
 readme = "README.md"
 requires-python = ">=3.9"
-dependencies = []
+# jsonschema 用于实际执行 schemas/ 下的契约校验。下界 4.18 是 registry/resolver
+# API 的引入版本，跨文件 $ref 依赖该 API；上界防止主版本变更破坏解析行为。
+dependencies = ["jsonschema>=4.18,<5"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",

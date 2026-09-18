@@ -1,0 +1,46 @@
+{
+  "schema_version": "0.1.0",
+  "report_id": "RPT-2026-0918-001",
+  "record_ref": "REC-2026-0918-001",
+  "provenance": {
+    "input_origin": "simulated",
+    "report_status": "expected"
+  },
+  "device": {
+    "model": "MPC5554"
+  },
+  "test": {
+    "id": "PBIT-DSPI-C-0007",
+    "target": "DSPI_C",
+    "name": "DSPI_C 回环自检",
+    "result": "fail"
+  },
+  "observations": [],
+  "analysis": {
+    "fault_state": "not_determined",
+    "root_cause": "not_determined",
+    "confirmed_states": [],
+    "candidate_causes": [],
+    "inconsistencies": [],
+    "insufficient_data": [
+      {
+        "missing": "DSPI_C 的寄存器观测，例如 DSPI_C.SR 的 TCF / TXRXS / RFOF / RFDF / TXCTR / RXCTR，以及 DSPI_C.MCR 的 MDIS / MSTR",
+        "reason": "记录只有自检结论，没有可核对的外设状态证据，无法判断失败发生在传输未启动、传输未完成还是接收缓冲异常，因此 DSPI_C 是否曾进入 RUNNING 状态、失败是否与接收缓冲有关、异常是否位于 DSPI 模块内部均无法判定"
+      },
+      {
+        "missing": "自检的发送值与实际接收值（MISO）",
+        "reason": "输入仅给出 test.result=fail，未给出失败模式；缺少发送值与实际接收值，无法区分传输完成但数据不符与传输未完成，失败的具体模式因此无法判定"
+      },
+      {
+        "missing": "该次自检的测试定义（期望接收值、限时、判定条件）",
+        "reason": "记录只给出通过或失败结论，缺少判定条件则无法复核该结论本身是否成立，test.result=fail 的判定依据是否与本次分析口径一致无法判定"
+      }
+    ],
+    "recommended_checks": [
+      "补充采集 DSPI_C.SR，并同时记录 DSPI_C.MCR 的 MDIS 与 MSTR 位；MSTR 决定 TFUF 是否可能置位",
+      "记录自检发送的 MOSI 值与实际接收的 MISO 值，以及该次传输是否在限时内完成",
+      "提供该次自检的测试定义，包括期望接收值、限时与判定条件，以便复核 test.result",
+      "若 DSPI_C 工作于从模式，一并记录 TFUF 位与外部主机的传输时刻"
+    ]
+  }
+}

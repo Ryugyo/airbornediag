@@ -1,0 +1,249 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AirborneDiag 故障记录（输入契约）",
+  "description": "格式版本 0.1.0。字段语义、缺失值约定与兼容性规则见 docs/contracts.md；首批诊断场景见 docs/scenarios.md。",
+  "type": "object",
+  "required": ["schema_version", "record_id", "origin", "device", "test"],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "record_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "origin": {
+      "enum": ["simulated", "manual_capture", "device_log"],
+      "description": "记录来源。模拟案例与真实设备记录必须可区分。"
+    },
+    "captured_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "整份记录的采集时刻，须含时区偏移。缺省表示未知。"
+    },
+    "device": {
+      "$ref": "#/$defs/device"
+    },
+    "test": {
+      "$ref": "#/$defs/test"
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/observation"
+      },
+      "description": "补充证据。缺省或为空数组均表示未采集，含义为未知，不等于无异常。"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "device": {
+      "type": "object",
+      "required": ["model"],
+      "properties": {
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "芯片型号，例如 MPC5554。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "test": {
+      "type": "object",
+      "required": ["id", "target", "result"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "检测标识。"
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1,
+          "description": "检测对象，通常为模块实例，例如 CAN_A、DSPI_C。"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "result": {
+          "enum": ["pass", "fail"],
+          "description": "检测结论。未执行的检测不产生记录，本字段不设 unknown。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "observation_common": {
+      "type": "object",
+      "required": ["id", "kind", "target"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "观测标识，供诊断报告引用。同一记录内唯一。"
+        },
+        "kind": {
+          "enum": ["register", "can_frame", "spi_transfer", "timeout"],
+          "description": "观测种类。新增外设时在此扩展。"
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "该条观测的时刻，须含时区偏移。数组顺序不承载时序语义，需要时序时必须使用本字段。"
+        },
+        "capture_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "同一次寄存器读取的关联标识。只表示来自同一次读取动作，不表示不同寄存器之间天然同步。"
+        },
+        "semantics": {
+          "enum": ["since_last_read", "instantaneous"],
+          "description": "本次采集的语义。since_last_read 表示读清除位，其内容只反映上次读取以来的情况；instantaneous 表示瞬时状态位。缺省表示未知。"
+        },
+        "covers_since": {
+          "type": "string",
+          "format": "date-time",
+          "description": "仅当 semantics 为 since_last_read 时有意义，表示本次读取所清除的标志位覆盖区间的起点。缺省表示未知。"
+        }
+      }
+    },
+    "observation": {
+      "oneOf": [
+        { "$ref": "#/$defs/register_observation" },
+        { "$ref": "#/$defs/can_frame_observation" },
+        { "$ref": "#/$defs/spi_transfer_observation" },
+        { "$ref": "#/$defs/timeout_observation" }
+      ]
+    },
+    "register_observation": {
+      "allOf": [
+        { "$ref": "#/$defs/observation_common" },
+        {
+          "properties": {
+            "kind": {
+              "const": "register"
+            },
+            "register": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_]+\\.[A-Za-z0-9_]+$",
+              "description": "模块限定的寄存器名，形如 CAN_A.ECR。必须带模块实例前缀，禁止只写 ESR 这类在同一手册中跨模块重名的裸助记符。"
+            },
+            "value": {
+              "type": "integer",
+              "description": "原始寄存器值。"
+            },
+            "fields": {
+              "type": "object",
+              "minProperties": 1,
+              "description": "已解码的位域。字段缺失表示该位域未知，不等于零值。"
+            }
+          },
+          "required": ["register"],
+          "anyOf": [{ "required": ["value"] }, { "required": ["fields"] }],
+          "not": { "required": ["value", "fields"] }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "can_frame_observation": {
+      "allOf": [
+        { "$ref": "#/$defs/observation_common" },
+        {
+          "properties": {
+            "kind": {
+              "const": "can_frame"
+            },
+            "direction": {
+              "enum": ["tx", "rx"]
+            },
+            "identifier": {
+              "type": "string",
+              "minLength": 1,
+              "description": "报文标识，建议使用带 0x 前缀的十六进制字符串。"
+            },
+            "identifier_format": {
+              "enum": ["standard", "extended"]
+            },
+            "dlc": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 8
+            },
+            "data": {
+              "type": "string",
+              "minLength": 1
+            },
+            "acknowledged": {
+              "type": "boolean",
+              "description": "发送方向时表示是否在 ACK 位被应答。"
+            }
+          },
+          "required": ["direction", "identifier"]
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "spi_transfer_observation": {
+      "allOf": [
+        { "$ref": "#/$defs/observation_common" },
+        {
+          "properties": {
+            "kind": {
+              "const": "spi_transfer"
+            },
+            "mosi": {
+              "type": "integer"
+            },
+            "miso": {
+              "type": "integer",
+              "description": "实际接收值。"
+            },
+            "pcs": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "片选序号。"
+            },
+            "completion": {
+              "enum": ["completed", "timeout", "aborted"]
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "timeout_observation": {
+      "allOf": [
+        { "$ref": "#/$defs/observation_common" },
+        {
+          "properties": {
+            "kind": {
+              "const": "timeout"
+            },
+            "waiting_for": {
+              "type": "string",
+              "minLength": 1,
+              "description": "等待的事件。"
+            },
+            "limit_ms": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "elapsed_ms": {
+              "type": "number",
+              "minimum": 0,
+              "description": "缺省表示实际等待时长未知。"
+            }
+          },
+          "required": ["waiting_for"]
+        }
+      ],
+      "unevaluatedProperties": false
+    }
+  }
+}

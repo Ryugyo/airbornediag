@@ -1,0 +1,38 @@
+{
+  "registry_version": "0.1.0",
+  "note": "工程内可引用的文献来源集中登记于此。诊断结论通过 basis.source 引用本表的 id，不在结论中重复文献元数据。原始资料不随代码提交，核对时以 order_number 与 revision 为准，local_files 仅为本地核对路径。",
+  "sources": [
+    {
+      "id": "MPC5554_RM",
+      "title": "MPC5553/5554 Microcontroller Reference Manual",
+      "order_number": "MPC5553_MPC5554_RM",
+      "revision": "Rev. 5",
+      "document_set_revision": "Rev. 5.1",
+      "date": "2012-03",
+      "publisher": "Freescale Semiconductor",
+      "applies_to": ["MPC5553", "MPC5554"],
+      "local_files": ["knowledge/sources/MPC5553_MPC5554_RM复杂.pdf"],
+      "addenda": [
+        {
+          "title": "MPC5553/5554 Reference Manual Addendum",
+          "revision": "Rev. 3",
+          "date": "2012-03",
+          "affected_locations": ["Table 2-1", "Table 2-2"],
+          "note": "勘误仅涉及 VDDEH10 引脚定义，未涉及第 20 章（DSPI）与第 22 章（FlexCAN2），本批场景对该手册的引用不受影响"
+        }
+      ],
+      "note": "文档集由 Reference Manual Rev. 5 与 Reference Manual Addendum Rev. 3 组成；正文各章页脚标注为 Rev. 5"
+    },
+    {
+      "id": "AN2865",
+      "title": "AN2865 Qorivva Simple Cookbook: \"Hello World\" Programs to Exercise Common Features on MPC5500 & MPC5600 Microcontrollers",
+      "order_number": "AN2865",
+      "revision": "Rev. 4",
+      "date": "2010-04",
+      "publisher": "Freescale Semiconductor",
+      "applies_to": ["MPC5500", "MPC5600"],
+      "local_files": ["knowledge/sources/AN2865 简单应用编写.pdf"],
+      "note": "示例程序集，含 DSPI 与 FlexCAN 的初始化示例。本批场景未引用其作为故障判据，登记备查"
+    }
+  ]
+}
