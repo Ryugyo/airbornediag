@@ -29,6 +29,11 @@ wheelhouse/
 
 /knowledge/sources/
 
+# 生成的知识全文索引（按 docs/development.md 的步骤在本地重建）
+# 整理后的知识 knowledge/curated/ 是源文件，正常提交
+
+/knowledge/index/
+
 # Python cache
 
 **/__pycache__/
