@@ -12,6 +12,7 @@
 | 依赖管理 | PEP 621 `pyproject.toml` + setuptools 构建后端 + 标准库 `venv` + `pip` |
 | 运行期依赖 | `jsonschema>=4.18,<5`（执行 `schemas/` 下的契约校验） |
 | 开发依赖 | `pytest`（`[project.optional-dependencies] dev`） |
+| 模型调用 | 标准库 `urllib`，不引入第三方依赖 |
 | 版本来源 | `src/airbornediag/__init__.py` 的 `__version__`，由 `pyproject.toml` 动态引用 |
 
 **为什么是 3.9**：RDC300I 系统 Python 为 3.9.9，且已在该版本上验证可创建独立虚拟环境。首版采用与板端一致的 Python 次版本，避免出现"Windows 验证通过但板端不通过"的情况。
@@ -22,7 +23,7 @@
 
 **`format` 未完全生效**：Schema 中的 `format: date-time` 需要额外的格式校验器才会执行，本工程未引入该校验器，因此日期时间只按字符串类型校验。该限制在校验脚本的输出与 [contracts.md](contracts.md) 的"已知限制"中均有说明。
 
-**不在本任务范围内**：MindIE、CANN、PyTorch 及模型推理依赖。应用后续通过 HTTP 调用 MindIE，与推理环境分开管理。
+**推理环境不在本工程内**：CANN、PyTorch、MindIE 与模型权重由板端推理环境管理，不进入本工程的依赖与仓库；应用只通过 HTTP 调用已部署的服务，见下文"模型服务调用（MindIE）"。
 
 ## Windows 开发环境
 
@@ -54,8 +55,12 @@ python3.9 -m venv .venv
 | `airbornediag --help` | 退出码 0，输出 usage 与参数说明 |
 | `airbornediag --version` | 退出码 0，输出 `airbornediag 0.1.0` |
 | 仓库外目录执行 | 退出码 0，确认命令来自安装而非当前目录 |
-| `python -m pytest` | 14 passed（`test_cli.py` 4 项 + `test_contract_examples.py` 10 项） |
+| `python -m pytest` | 60 passed（`test_cli.py` 4 + `test_contract_examples.py` 10 + `test_llm_prompt.py` 2 + `test_llm_config.py` 15 + `test_llm_client.py` 17 + `test_llm_cli.py` 12） |
 | `python scripts/validate_contracts.py` | 退出码 0，并打印日期时间格式未执行的说明 |
+| `airbornediag llm --help` | 退出码 0，输出子命令说明 |
+| `airbornediag llm --prompt "你好"`（本机无 MindIE 服务） | 退出码 3，打印端点与连接失败原因；**未返回任何模拟回答** |
+
+Windows 侧不运行 Qwen，因此上表中模型调用的验证只覆盖到"失败被如实上报"，真实调用未执行。
 
 Windows 侧解释器为 3.9.25，板端为 3.9.9，次版本一致、补丁版本不同；两端各自独立验证，板端记录见下文。
 
@@ -87,6 +92,10 @@ airbornediag --version
 
 `tests/test_contract_examples.py`（10 项）覆盖契约的格式与引用：示例与期望报告通过校验、输入缺省 `observations` 时报告回显为空数组，以及 5 项负例（证据引用不存在、来源未登记、回显字段被改写、观测 id 重复、`register` 观测缺 `value` 与 `fields`）、1 项未知观测种类、1 项跨文件 `$ref` 确实生效、1 项校验脚本如实声明日期时间格式未执行。
 
+`tests/test_llm_prompt.py`（2 项）、`tests/test_llm_config.py`（15 项）、`tests/test_llm_client.py`（17 项）、`tests/test_llm_cli.py`（12 项）覆盖模型调用：ChatML 提示词格式、配置优先级与取值校验、请求体是否与历史脚本一致、回答提取、连接/超时/HTTP/响应格式四类失败，以及子命令的输出与退出码。
+
+这些测试通过测试进程内的假 HTTP 服务（`tests/fake_mindie.py`）走真实的 HTTP 调用路径，**工程代码中没有任何模拟或降级分支**：调用失败一律报错，不会返回替代回答。假服务只存在于 `tests/`，不属于产品代码。
+
 说明：可编辑安装会把 `src` 加入 `sys.path`（`.venv` 中的 `__editable__.*.pth`），此时 `src/airbornediag.egg-info` 与 `site-packages` 中的 `dist-info` 都会被识别为发行版，入口点可能被枚举多次。该现象不影响命令执行，测试按集合比较。构建产物已由 `.gitignore` 排除。
 
 ## 契约校验
@@ -100,6 +109,72 @@ airbornediag --version
 脚本接受 `--root 工程根目录`，默认使用脚本所在工程的根目录；跨文件 `$ref` 从本地 Schema 解析，不访问网络。Linux 下将 `.\.venv\Scripts\python.exe` 换成 `.venv/bin/python`。
 
 校验通过**不代表诊断结论正确**，只代表格式与引用成立。脚本会在通过时一并说明哪些约束没有执行（当前为日期时间格式），详见 [contracts.md](contracts.md) 的"已知限制"。
+
+## 模型服务调用（MindIE）
+
+应用通过 HTTP 调用 RDC300I 上已部署的 MindIE 服务，使用标准库 `urllib`，**不引入第三方依赖**，因此 `wheelhouse/` 无需变更。
+
+本模块只做一次非流式请求：发送一段文本，取回回答。不重试、不降级、不缓存，**失败时不返回任何模拟回答**。不含知识检索、诊断规则与多轮会话。
+
+### 接口依据
+
+请求格式取自 RDC300I 上**已验证可用**的历史脚本（`mindie_chat.py`、`mindie_load_test.py`，两者一致），不是按文档推测的：
+
+| 项 | 值 |
+|---|---|
+| 方法 | `POST` |
+| 地址 | `http://127.0.0.1:1025/generate` |
+| 请求头 | `Content-Type: application/json`；历史脚本**未发送任何认证头** |
+| 请求体 | `{"prompt": "<ChatML 文本>", "max_tokens": 1000, "stream": false, "model": "Qwen2.5-1.5B"}` |
+| 响应 | `{"text": "<回答>"}`，`text` 也可能是字符串数组 |
+
+`/generate` 是 MindIE 原生文本生成接口，接收原始文本、**不套用对话模板**，因此提示词由应用按 Qwen2.5 的 ChatML 格式构造（`src/airbornediag/llm/prompt.py`，与历史脚本逐字一致）。它不是 OpenAI 兼容接口：改接口路径指向 `/v1/chat/completions` 不会工作，两者的请求体与响应结构都不同。
+
+历史脚本还处理了两种实测现象，本工程沿用：响应可能把输入提示一并回显；可能在回答之后继续生成下一轮对话，需按 `<|im_end|>` 截断。
+
+### 配置
+
+服务地址、接口路径、模型名、超时与认证信息都不写在源码里。取值优先级：**命令行参数 > 环境变量 > 工作目录下的 `.env` > 内置默认值**。默认值即上表中的历史脚本取值。
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `AIRBORNEDIAG_LLM_BASE_URL` | `http://127.0.0.1:1025` | 服务地址，主机与端口 |
+| `AIRBORNEDIAG_LLM_GENERATE_PATH` | `/generate` | 接口路径 |
+| `AIRBORNEDIAG_LLM_MODEL` | `Qwen2.5-1.5B` | 模型名，须与 MindIE 服务 `config.json` 的 `modelName` 一致 |
+| `AIRBORNEDIAG_LLM_MAX_TOKENS` | `1000` | 单次最大生成 token 数 |
+| `AIRBORNEDIAG_LLM_TIMEOUT` | `300` | 单次请求超时秒数 |
+| `AIRBORNEDIAG_LLM_API_KEY` | 空 | 非空时发送 `Authorization: Bearer <值>`；留空不发送认证头 |
+
+复制 [.env.example](../.env.example) 为工程根目录下的 `.env` 后修改即可。`.env` 已被 `.gitignore` 排除，真实凭据不提交。
+
+**认证默认关闭**，与历史脚本一致；板端真实调用在未配置凭据的情况下成功，说明该部署当前不需要认证。**需要认证时的分支尚未验证**。
+
+### 命令行验证
+
+```powershell
+.\.venv\Scripts\airbornediag.exe llm --prompt "你好"
+```
+
+回答输出到标准输出，端点、模型、耗时等诊断信息输出到标准错误，便于管道使用。省略 `--prompt` 时从标准输入读取；另有 `--system`、`--max-tokens`、`--timeout`、`--base-url` 用于临时覆盖配置。
+
+失败时按类型返回不同退出码，便于在无图形界面的板端区分原因：
+
+| 退出码 | 含义 |
+|---|---|
+| 0 | 成功 |
+| 2 | 参数或配置错误（与 argparse 的用法错误一致） |
+| 3 | 连接失败：服务未启动或地址不可达 |
+| 4 | 请求超时 |
+| 5 | HTTP 错误：服务返回非 2xx |
+| 6 | 响应格式异常：非 JSON、缺少 `text`、`text` 为空数组或类型不符 |
+
+### 验证情况
+
+对真实服务的调用已在板端验证通过（2026-09-21，见"验证记录（RDC300I）"）：默认配置下 `airbornediag llm` 退出码 0 并取回回答，认证头未发送。
+
+仍然未验证的部分：**认证分支**（`AIRBORNEDIAG_LLM_API_KEY` 非空）从未执行过；**非默认配置**（其他服务地址、接口路径或模型名）未验证；**Windows 直连板端服务**未验证，已验证的调用是在板端本机执行的。
+
+Windows 本机不运行 Qwen，Windows 侧的模型调用测试全部针对 `tests/fake_mindie.py` 提供的假服务，只覆盖成功与失败的代码路径，不构成对真实服务的验证。
 
 ## RDC300I 板端部署与验证
 
@@ -167,6 +242,14 @@ python -m pip download -d wheelhouse --only-binary=:all: \
    .venv/bin/python scripts/validate_contracts.py; echo "exit=$?"
    ```
 
+5. 验证真实模型服务调用（`AIRBORNEDIAG_LLM_*` 未配置时使用默认的 `http://127.0.0.1:1025/generate`）：
+
+   ```bash
+   .venv/bin/airbornediag llm --prompt "你好"; echo "exit=$?"
+   ```
+
+   退出码含义见"模型服务调用（MindIE）"。退出码 0 且打印出模型回答，说明真实调用通过；退出码 3 表示服务未启动或地址不可达。
+
 以上步骤均在板端 venv 内进行，不修改系统 Python、MindIE 容器或 CANN 环境。
 
 ### 验证记录（RDC300I）
@@ -183,9 +266,26 @@ python -m pip download -d wheelhouse --only-binary=:all: \
 
 当时使用的是默认安装命令，未执行 `--upgrade pip`、`--no-build-isolation` 或普通安装等备用方案。当时已安装依赖的版本清单未收集。
 
-**待完成**：引入 `jsonschema` 与其传递依赖后，板端需重新执行第 3、4 步。本轮**尚未在板端验证**，重点确认 `rpds-py` 的 aarch64/cp39 wheel 能在板端安装、`jsonschema` 能导入、契约校验与 14 项测试全部通过。在完成之前，不得认为本轮变更已在板端通过。
+**已完成（2026-09-21，引入 `jsonschema` 与模型调用之后）**：
 
-已有验证仅覆盖安装、命令行入口与测试的可运行性。诊断功能尚未实现，MindIE 接入、知识检索与诊断结论均不在验证范围内。
+第 3、4、5 步均在板端执行通过：
+
+| 项 | 结果 |
+|---|---|
+| 离线安装（第 3 步） | 成功，`rpds-py` 的 aarch64/cp39 wheel 在板端正常安装 |
+| `python -m pytest` | 全部通过（60 项：CLI 4 + 契约 10 + 模型调用 46） |
+| `python scripts/validate_contracts.py` | 退出码 0，`jsonschema` 正常导入并执行两份 Schema |
+| `airbornediag llm --prompt "你好"` | 退出码 0，取回模型回答 |
+
+真实调用时的配置情况：
+
+- 未配置 `AIRBORNEDIAG_LLM_API_KEY`，即按默认不发送认证头，调用成功——与历史脚本一致，该部署当前不需要认证；
+- 未覆盖 `AIRBORNEDIAG_LLM_MODEL`，即默认值 `Qwen2.5-1.5B` 与该服务 `config.json` 的 `modelName` 一致；
+- 调用在板端本机执行，未经过 Windows 侧。
+
+板端解释器为 3.9.9，Windows 侧为 3.9.25，两端各自独立验证。
+
+未收集：板端已安装依赖的具体版本清单。诊断功能尚未实现，知识检索与诊断结论不在验证范围内。
 
 ### 备用方案（未验证）
 
@@ -203,17 +303,19 @@ python -m pip download -d wheelhouse --only-binary=:all: \
 
 以下内容**尚未验证**，不得视为通过：
 
-- 引入 `jsonschema` 后整轮在板端的离线安装与校验（见"验证记录（RDC300I）"的"待完成"）；
-- `rpds-py` 在 RDC300I 上的安装与导入；本文只确认了其 aarch64/cp39 wheel 可从 PyPI 取得，未在板端安装过；
 - "备用方案"中的所有分支：板端升级 pip、`--no-build-isolation` 安装、普通（非可编辑）安装；
 - 板端 locale 非 UTF-8 时的中文输出处理；
 - 板端已安装依赖的具体版本（未收集）；
-- Schema 中的 `format: date-time`（见 [contracts.md](contracts.md) 的"已知限制"）。
+- Schema 中的 `format: date-time`（见 [contracts.md](contracts.md) 的"已知限制"）；
+- **Windows 直连板端模型服务**：已验证的真实调用在板端本机执行，Windows 到板端 1025 端口的连通性仍未验证（`docs/architecture.md` 早有此遗留项）；
+- `AIRBORNEDIAG_LLM_API_KEY` 非空时的认证分支，从未执行过；
+- 模型服务的非默认配置：只验证了默认的服务地址、接口路径与模型名；
+- 模型回答的内容质量与诊断适用性。
 
-已验证的范围仅限于：Python 包在 Windows 与 RDC300I 上的安装、命令行 `--help`/`--version` 的输出与退出码、测试执行、契约校验脚本在 Windows 上的运行结果。
+已验证的范围：Python 包在 Windows 与 RDC300I 上的安装、命令行 `--help`/`--version`/`llm` 的输出与退出码、测试执行、契约校验脚本在两端的结果、模型调用在假服务上的成功与失败路径，以及**对真实 MindIE 服务的一次成功调用**。
 
 以下内容**不在验证范围内**，不能由上述结果推断为通过：
 
-- MindIE 接入与模型调用；
+- 真实模型调用的回答质量。**接口调用成功不等于诊断结论正确**，生成报告成功也不等于诊断正确；
 - 故障 JSON、诊断流程、知识库与诊断结论的正确性；
 - 板端系统 Python、MindIE 容器与 CANN 环境的行为（本工程未修改这些环境）。
