@@ -1,0 +1,89 @@
+{
+  "curated_version": "0.1.0",
+  "chip": "MPC5554",
+  "peripheral": "DSPI",
+  "source_id": "MPC5554_RM",
+  "note": "依据 MPC5553/5554 Microcontroller Reference Manual 第 20 章（DSPI）整理，覆盖 docs/scenarios.md 中 DS-01、DS-02 两条场景所需的知识。定位使用章节号与表/图编号，不写页码与位编号，理由同 mpc5554-flexcan2.json。本批条目的 kind 全部为 chip_knowledge；detection_definition 与 diagnosis_basis 待后续批次。",
+  "entries": [
+    {
+      "id": "MPC5554-DSPI-MCR-MSTR",
+      "kind": "chip_knowledge",
+      "title": "DSPI 主从模式选择（MSTR）",
+      "locator": "20.3.2.1，Figure 20-3，Table 20-3；20.4.1.1；20.4.1.2",
+      "body": "DSPIx_MCR 的 MSTR 位配置 DSPI 为主模式或从模式：0 为从模式，1 为主模式。\n主模式下 DSPI 作为总线主控，SCK 由本模块产生，SPI 配置下的传输属性由当前 TX FIFO 条目中的 SPI 命令控制。从模式下 DSPI 响应外部 SPI 主控发起的传输，由外部主控拉低 SS 选中，SCK 由外部主控提供，传输属性由外部主控决定。\nDSPIx_MCR 中只有 HALT 和 MDIS 两位可以在 DSPI 运行期间修改。",
+      "quote": "Master/slave mode select. Configures the DSPI for either master mode or slave mode. 0 DSPI is in slave mode 1 DSPI is in master mode"
+    },
+    {
+      "id": "MPC5554-DSPI-SR-W1C",
+      "kind": "chip_knowledge",
+      "title": "DSPIx_SR 标志位的写 1 清除",
+      "locator": "20.3.2.4",
+      "body": "DSPIx_SR 中的标志位由软件写 1 清除，写 0 对该位没有影响。这些位反映 DSPI 的状态，并指示可产生中断或 DMA 请求的事件。",
+      "quote": "Software can clear flag bits in the DSPIx_SR by writing a 1 to it. Writing a 0 to a flag bit has no effect."
+    },
+    {
+      "id": "MPC5554-DSPI-SR-TCF",
+      "kind": "chip_knowledge",
+      "title": "传输完成标志 TCF",
+      "locator": "20.3.2.4，Figure 20-6，Table 20-6",
+      "body": "TCF 置位表示一帧中的所有位都已移出。该位在最后一个输入数据位被采样之后、tASC 延时开始之前置位，通过写 1 清除。0 表示传输未完成，1 表示传输完成。",
+      "quote": "Transfer complete flag. Indicates that all bits in a frame have been shifted out. The TCF bit is set after the last incoming databit is sampled, but before the tASC delay starts."
+    },
+    {
+      "id": "MPC5554-DSPI-SR-TXRXS",
+      "kind": "chip_knowledge",
+      "title": "TX/RX 运行状态标志 TXRXS",
+      "locator": "20.3.2.4，Table 20-6；20.4.2，Figure 20-18，Table 20-17",
+      "body": "TXRXS 反映 DSPI 的 TX 与 RX 操作状态：0 表示 TX 和 RX 操作被禁用，DSPI 处于 STOPPED 状态；1 表示已启用，DSPI 处于 RUNNING 状态。该位通过写 1 清除。\nSTOPPED 是 DSPI 的默认状态，主模式下不发起任何传输、从模式下不应答任何传输，同时也是修改 DSPI 各配置寄存器而不产生未定结果的安全状态。DSPI 在满足下列任一条件时于当前帧结束后由 RUNNING 转入 STOPPED：EOQF 置位；调试模式被选中且 FRZ 置位；HALT 置位。转入 RUNNING 则要求 EOQF 为 0、调试模式未选中或 FRZ 为 0、且 HALT 为 0。",
+      "quote": "TX and RX status. ... 0 TX and RX operations are disabled (DSPI is in STOPPED state) 1 TX and RX operations are enabled (DSPI is in RUNNING state)"
+    },
+    {
+      "id": "MPC5554-DSPI-SR-EOQF",
+      "kind": "chip_knowledge",
+      "title": "队尾标志 EOQF",
+      "locator": "20.3.2.4，Table 20-6",
+      "body": "EOQF 置位表示正在进行的传输是队列中的最后一条：当 TX FIFO 条目中的命令半字置有 EOQ 位，且在最后一个输入数据位被采样之后、tASC 延时开始之前置位。EOQF 通过写 1 清除；EOQF 置位时 TXRXS 被自动清除。该位在从模式下不工作。",
+      "quote": "End of queue flag. ... The EOQF bit is cleared by writing 1 to it. When the EOQF bit is set, the TXRXS bit is automatically cleared. ... Note: EOQF does not function in slave mode."
+    },
+    {
+      "id": "MPC5554-DSPI-SR-TFUF",
+      "kind": "chip_knowledge",
+      "title": "发送 FIFO 下溢标志 TFUF 仅对 SPI 从模式检测",
+      "locator": "20.3.2.4，Table 20-6；20.4.3.4.2；20.4.9.4",
+      "body": "TFUF 置位表示 TX FIFO 发生了下溢。该下溢条件仅对工作在 SPI 配置下、且为从模式的 DSPI 模块检测：当从模式 DSPI 的 TX FIFO 为空、而外部 SPI 主控发起了一次传输时置位。TFUF 通过写 1 清除。",
+      "quote": "The transmit underflow condition is detected only for DSPI modules operating in slave mode and SPI configuration. The TFUF bit is set when the TX FIFO of a DSPI operating in slave mode and SPI configuration is empty, and a transfer is initiated from an external SPI master."
+    },
+    {
+      "id": "MPC5554-DSPI-SR-FIFO-FLAGS",
+      "kind": "chip_knowledge",
+      "title": "FIFO 填充、溢出与排空标志 TFFF、RFOF、RFDF",
+      "locator": "20.3.2.4，Table 20-6；20.4.3.5.1",
+      "body": "TFFF 在 TX FIFO 未满时置位，表示可以向其中加入条目；该位通过写 1 清除，或由 eDMA 在 TX FIFO 已满时确认写 DSPIx_PUSHR 完成而清除。\nRFOF 在 RX FIFO 与移位寄存器都已满、又发起一次传输时置位，表示 RX FIFO 溢出，通过写 1 清除；此时若 DSPIx_MCR 的 ROOE 置位，该次传输的数据被移入移位寄存器，否则被忽略。\nRFDF 在 RX FIFO 非空时置位，表示可以从中取出条目，通过写 1 清除，或由 eDMA 确认读空 DSPIx_POPR 而清除；中断服务程序中必须在读取 DSPIx_POPR 之后再清除 RFDF。",
+      "quote": "If the RX FIFO and shift register are full and a transfer is initiated, the RFOF bit in the DSPIx_SR is asserted indicating an overflow condition. ... Note: In the interrupt service routine, RFDF must be cleared only after the DSPIx_POPR register is read."
+    },
+    {
+      "id": "MPC5554-DSPI-SR-FIFO-COUNTERS",
+      "kind": "chip_knowledge",
+      "title": "DSPIx_SR 的 FIFO 计数器与指针",
+      "locator": "20.3.2.4，Figure 20-6，Table 20-6；20.4.3.4；20.4.3.5",
+      "body": "TXCTR 表示 TX FIFO 中有效条目的数量：每次写 DSPIx_PUSHR 时加一，每次执行 SPI 命令并把数据送入移位寄存器时减一。TXNXTPTR 指出下一次传输将发送哪个 TX FIFO 条目，每次数据由 TX FIFO 送入移位寄存器时更新。\nRXCTR 表示 RX FIFO 中的条目数：每次读 DSPIx_POPR 时减一，在最后一个输入数据位被采样之后、tASC 延时开始之前加一。POPNXTPTR 指向读取 DSPIx_POPR 时将返回的 RX FIFO 条目，每次读 DSPIx_POPR 时更新，在 MPC5553/MPC5554 上每四帧回绕一次。",
+      "quote": "TX FIFO counter. Indicates the number of valid entries in the TX FIFO. ... RX FIFO counter. Indicates the number of entries in the RX FIFO."
+    },
+    {
+      "id": "MPC5554-DSPI-FIFO-MECHANISM",
+      "kind": "chip_knowledge",
+      "title": "TX/RX FIFO 的容量与边界行为",
+      "locator": "20.4.3.4，20.4.3.4.1，20.4.3.4.2，20.4.3.5，20.4.3.5.2",
+      "body": "TX FIFO 与 RX FIFO 各含四个条目。\nTX FIFO 条目只能通过被移出或冲刷（写 DSPIx_MCR 的 CLR_TXF）移除；向已满的 TX FIFO 推入数据的尝试会被忽略，FIFO 状态保持不变，且不指示任何错误条件。\nRX FIFO 条目只能通过读 DSPIx_POPR 或冲刷 RX FIFO 移除；从空 RX FIFO 弹出数据的尝试会被忽略，RX FIFO 计数器保持不变，返回的数据是未定义的。",
+      "quote": "The DSPI ignores attempts to push data to a full TX FIFO; that is, the state of the TX FIFO is unchanged. No error condition is indicated. ... Attempts to pop data from an empty RX FIFO are ignored, the RX FIFO counter remains unchanged. The data returned from reading an empty RX FIFO is undetermined."
+    },
+    {
+      "id": "MPC5554-DSPI-CHAPTER-SCOPE",
+      "kind": "chip_knowledge",
+      "title": "第 20 章不提供 DSPI 的故障状态判据",
+      "locator": "第 20 章目录；20.3.2.4，Table 20-6；20.4.9",
+      "body": "第 20 章的章节结构为：20.4.9 中断/DMA 请求、20.4.10 低功耗特性、20.5 初始化/应用信息、20.6 修订历史，不含错误处理或故障封闭章节。\n该章 DSPIx_SR 提供的状态仅为传输完成、TX/RX 运行状态、FIFO 计数与 FIFO 溢出/下溢标志。这些状态不足以把一次传输异常归入某个故障状态，也不足以在「传输未启动」「传输完成但数据不符」「接收缓冲异常」之间作出区分。因此第 20 章的寄存器观测不足以确认 DSPI 的故障状态。",
+      "quote": "20.4.9 Interrupts/DMA Requests ... 20.4.10 Power Saving Features ... 20.5 Initialization/Application Information ... 20.6 Revision History"
+    }
+  ]
+}

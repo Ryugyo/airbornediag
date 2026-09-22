@@ -1,0 +1,105 @@
+{
+  "curated_version": "0.1.0",
+  "chip": "MPC5554",
+  "peripheral": "FlexCAN2",
+  "source_id": "MPC5554_RM",
+  "note": "依据 MPC5553/5554 Microcontroller Reference Manual 第 22 章（FlexCAN2）整理，覆盖 docs/scenarios.md 中 FC-01、FC-02 两条场景所需的知识。定位使用章节号与表/图编号，不写页码：该手册偶数页用页眉、奇数页用页脚，PDF 文本层未保留完整页边界，页码无法逐条核实。同样不写位编号：在位编号逐条对照 Figure 核对之前，仅使用字段名与表/图编号。本批条目的 kind 全部为 chip_knowledge；detection_definition 与 diagnosis_basis 待后续批次。",
+  "entries": [
+    {
+      "id": "MPC5554-FlexCAN2-CR-LOM",
+      "kind": "chip_knowledge",
+      "title": "只听模式（LOM）",
+      "locator": "22.1.4.3；22.3.3.2，Figure 22-4，Table 22-8",
+      "body": "CANx_CR 的 LOM 置位时，FlexCAN2 进入只听模式：模块以 CAN 错误被动方式工作，冻结全部错误计数器，接收报文但不发送应答。该模式下无法发送任何报文。",
+      "quote": "The module enters this mode when the LOM bit in the CANx_CR is asserted. In this mode, FlexCAN operates in a CAN error passive mode, freezing all error counters and receiving messages without sending acknowledgments. ... It is not possible to transmit any message in this mode."
+    },
+    {
+      "id": "MPC5554-FlexCAN2-CR-BOFFREC",
+      "kind": "chip_knowledge",
+      "title": "总线关闭恢复方式（BOFFREC）",
+      "locator": "22.3.3.2，Figure 22-4，Table 22-8",
+      "body": "CANx_CR 的 BOFFREC 定义 FlexCAN2 如何从总线关闭状态恢复。该位为 0 时按 CAN 规范 2.0B 自动恢复；为 1 时禁用自动恢复，模块保持总线关闭，直到该位被清除。\n清除时机决定恢复过程：若在总线上检测到 128 次「11 个连续隐性位」之前清除该位，恢复过程与从未置位时相同；若在之后清除，FlexCAN2 会先等待 11 个隐性位再重新加入总线。\n进入总线关闭时该位已被清除的，在总线关闭期间重新置位对本次恢复无效，只在下一次进入总线关闭时生效。",
+      "quote": "Bus off recovery mode. ... If the bit is asserted, automatic recovering from bus off is disabled and the module remains in bus off state until the bit is negated by the user. ... If BOFFREC was negated when the module entered bus off, asserting it during bus off will not be effective for the current bus off recovery."
+    },
+    {
+      "id": "MPC5554-FlexCAN2-CR-BITTIMING",
+      "kind": "chip_knowledge",
+      "title": "位定时字段与位时间的组成",
+      "locator": "22.3.3.2，Table 22-8；22.4.5.4",
+      "body": "CANx_CR 中控制位定时的字段及其取值范围：PRESDIV 为预分频系数，S 时钟频率 = CPI 时钟频率 / (PRESDIV + 1)，最大取值为 0xFF；RJW 为重同步跳宽，重同步跳宽 = RJW + 1 个时间份额，可编程值 0-3；PSEG1 为相位缓冲段 1，长度 = PSEG1 + 1 个时间份额，可编程值 0-7；PSEG2 为相位缓冲段 2，长度 = PSEG2 + 1 个时间份额，可编程值 1-7；PROPSEG 为传播段，长度 = PROPSEG + 1 个时间份额，可编程值 0-7。\n一个位时间由三段组成：SYNCSEG 固定 1 个时间份额；时间段 1 为传播段加相位缓冲段 1，即 PROPSEG + PSEG1 + 2，取值 4-16 个时间份额；时间段 2 即相位缓冲段 2，即 PSEG2 + 1，取值 2-8 个时间份额。三者合计为 8-25 个时间份额，波特率 = 时间份额频率 / 时间份额数。",
+      "quote": "Time segment 1 ... can be programmed by setting the PROPSEG and the PSEG1 fields ... so that their sum (plus 2) is in the range of 4 to 16 time quanta. Time segment 2 ... can be programmed by setting the PSEG2 field ... (plus 1) to be 2 to 8 time quanta long."
+    },
+    {
+      "id": "MPC5554-FlexCAN2-CR-ACCESS",
+      "kind": "chip_knowledge",
+      "title": "CANx_CR 的写入时机与例外",
+      "locator": "22.3.3.2",
+      "body": "CANx_CR 中大多数字段只应在模块禁用或 freeze 模式下修改。例外是 BOFFMSK、ERRMSK 和 BOFFREC 三位，可以随时访问。CANx_CR 不受软复位影响，即 CANx_MCR 的 SOFTRST 置位时该寄存器不被复位。",
+      "quote": "Most of the fields in this register should only be changed while the module is disabled or in freeze mode. Exceptions are the BOFFMSK, ERRMSK, and BOFFREC bits, which can be accessed at any time. Note that CANx_CR is unaffected by soft reset ..."
+    },
+    {
+      "id": "MPC5554-FlexCAN2-ECR-COUNTERS",
+      "kind": "chip_knowledge",
+      "title": "发送与接收错误计数器的定义与访问方式",
+      "locator": "22.3.3.5，Figure 22-7",
+      "body": "CANx_ECR 含发送错误计数器 TXECTR 与接收错误计数器 RXECTR 两个字段，其增减规则由 CAN 协议规定并在 FlexCAN2 中完整实现。两个计数器均为只读，仅在 freeze 模式下可由 CPU 写入；freeze 模式下的写入是间接操作，数据先写入辅助寄存器，再经跨时钟域的请求/应答过程写入，因此实际生效需要一段时间，软件可轮询该寄存器判断是否已写入。",
+      "quote": "Both counters are read only except in freeze mode, where they can be written by the CPU. Writing to the CANx_ECR while in freeze mode is an indirect operation."
+    },
+    {
+      "id": "MPC5554-FlexCAN2-ECR-BUSSTATE-RULES",
+      "kind": "chip_knowledge",
+      "title": "总线状态迁移规则",
+      "locator": "22.3.3.5",
+      "body": "手册给出的 FlexCAN2 总线状态迁移基本规则：\n1. TXECTR 或 RXECTR 增至大于等于 128 时，CANx_ESR 的 FLTCONF 更新为「错误被动」状态。\n2. 处于「错误被动」状态时，若 TXECTR 或 RXECTR 减至小于等于 127，且另一个计数器也已满足该条件，FLTCONF 更新为「错误主动」状态。\n3. TXECTR 增至大于 255 时，FLTCONF 更新为总线关闭状态，并可能产生中断；随后 TXECTR 被复位为零。\n4. RXECTR 增至大于 127 后不再继续增加，即使作为接收方继续检测到错误；在下一次成功接收报文时，该计数器被置为 119 到 127 之间的一个值，以恢复到「错误主动」状态。",
+      "quote": "If the value of TXECTR or RXECTR increases to be greater than or equal to 128, the FLTCONF field in the CANx_ESR is updated to reflect the 'error passive' state."
+    },
+    {
+      "id": "MPC5554-FlexCAN2-ECR-BUSOFF-TXECTR",
+      "kind": "chip_knowledge",
+      "title": "总线关闭期间 TXECTR 的语义已改变",
+      "locator": "22.3.3.5",
+      "body": "进入总线关闭后，TXECTR 被复位为零，并与另一个内部计数器级联，用于计数总线上「11 个连续隐性位」出现的次数：内部计数器每数满 11 个这样的位就回绕一次，并使 TXECTR 加一。TXECTR 达到 128 时，FLTCONF 更新为「错误主动」，且两个错误计数器都复位为零。在少于 11 个连续隐性位之后出现任何显性位，内部计数器都自行复位为零，但不影响 TXECTR 的取值。\n因此总线关闭期间读到的 TXECTR 不是发送错误计数，不能用来衡量进入总线关闭前的错误严重程度；由于该值只是瞬时采样、且级联计数器的相位未知，也不能据此推断距离恢复还有多久。",
+      "quote": "If FlexCAN2 is in the bus off state, then TXECTR is cascaded together with another internal counter to count the 128th occurrences of 11 consecutive recessive bits on the bus."
+    },
+    {
+      "id": "MPC5554-FlexCAN2-ECR-SINGLE-NODE",
+      "kind": "chip_knowledge",
+      "title": "错误源仅为无应答时不会进入总线关闭",
+      "locator": "22.3.3.5",
+      "body": "若系统启动时总线上只有一个节点在运行，该节点每发送一帧都会因应答错误（CANx_ESR 的 ACKERR 位）使 TXECTR 增加；但在转入「错误被动」状态之后，TXECTR 不再因应答错误而增加，因此该设备永远不会进入总线关闭状态。\n适用条件是「错误源仅为无应答」。单节点总线上若同时存在位错误、填充错误等其他错误源，TXECTR 仍可继续累积并进入总线关闭，因此本条规则不能用来排除单节点总线这一情形。",
+      "quote": "If during system start-up, only one node is operating, then its TXECTR increases in each message it is trying to transmit, as a result of acknowledge errors (indicated by the ACKERR bit in CANx_ESR). After the transition to the 'error passive' state, the TXECTR does not increment anymore by acknowledge errors. Therefore the device never goes to the bus off state."
+    },
+    {
+      "id": "MPC5554-FlexCAN2-ESR-FLTCONF",
+      "kind": "chip_knowledge",
+      "title": "FLTCONF 故障封闭状态编码",
+      "locator": "22.3.3.6，Figure 22-8，Table 22-11",
+      "body": "CANx_ESR 的 FLTCONF 字段表示模块的故障封闭状态，编码为 00 错误主动（Error active）、01 错误被动（Error passive）、1X 总线关闭（Bus off）。该字段是状态位，不被读取操作清除。",
+      "quote": "Fault confinement state. ... 00 Error active / 01 Error passive / 1X Bus off"
+    },
+    {
+      "id": "MPC5554-FlexCAN2-ESR-FLTCONF-LOM",
+      "kind": "chip_knowledge",
+      "title": "LOM 置位时 FLTCONF 恒显示为错误被动",
+      "locator": "22.3.3.6，Table 22-11",
+      "body": "若 CANx_CR 的 LOM 置位，FLTCONF 字段会显示为「错误被动」。由于 CANx_CR 不受软复位影响，LOM 置位时 FLTCONF 也不受软复位影响。\n因此仅凭 FLTCONF 为 01 无法区分真实的错误被动与只听模式：要区分必须知道 LOM 的取值，LOM 未知时该状态不可判定。反向的区分是成立的：FLTCONF 为 1X（总线关闭）不会被 LOM 伪装，LOM 只会把状态显示成「错误被动」。",
+      "quote": "If the LOM bit in the CANx_CR is asserted, the FLTCONF field will indicate \"Error Passive\". Because the CANx_CR is not affected by soft reset, the FLTCONF field will not be affected by soft reset if the LOM bit is asserted."
+    },
+    {
+      "id": "MPC5554-FlexCAN2-ESR-READCLEAR",
+      "kind": "chip_knowledge",
+      "title": "错误标志位的读清除语义与覆盖区间",
+      "locator": "22.3.3.6，Figure 22-8，Table 22-11",
+      "body": "CANx_ESR 报告的错误条件 BIT1ERR、BIT0ERR、ACKERR、CRCERR、FRMERR、STFERR 表示「自上次读取该寄存器以来」发生的错误条件，CPU 的读取动作会清除这些位；TXWRN、RXWRN、IDLE、TXRX、FLTCONF、BOFFINT、ERRINT 是状态位，不受读取影响。\n因此一次读数只覆盖到上一次读取为止的区间，这些错误标志不能在诊断流程中投机读取；手册据此要求覆盖 CANx_ESR 的 TLB 项配置为 guarded。",
+      "quote": "The reported error conditions (bits 16-21) are those that occurred since the last time the CPU read this register. The CPU read action clears BIT1ERR, BIT0ERR, ACKERR, CRCERR, FRMERR, and STFERR. ... A read clears BIT1ERR, BIT0ERR, ACKERR, CRCERR, FRMERR, and STFERR, therefore these bits must not be read speculatively."
+    },
+    {
+      "id": "MPC5554-FlexCAN2-ESR-BOFFINT-ERRINT",
+      "kind": "chip_knowledge",
+      "title": "总线关闭中断标志与错误中断标志",
+      "locator": "22.3.3.6，Table 22-11；22.3.3.2，Table 22-8",
+      "body": "BOFFINT 在 FlexCAN2 处于总线关闭状态时置位；若 CANx_CR 的 BOFFMSK 置位，则向 CPU 产生中断。ERRINT 表示 CANx_ESR 的错误标志位中至少有一位置位；若 CANx_CR 的 ERRMSK 置位，则向 CPU 产生中断。BOFFINT 与 ERRINT 都通过写 1 清除，写 0 无效果。",
+      "quote": "Bus off interrupt. This status bit is set when FlexCAN2 is in the bus off state. If CANx_CR[BOFFMSK] is set, an interrupt is generated to the CPU. This bit is cleared by writing it to 1. Writing 0 has no effect."
+    }
+  ]
+}
