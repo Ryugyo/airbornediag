@@ -1,15 +1,19 @@
 """AirborneDiag 命令行入口。
 
-当前提供使用说明、版本查询、用于验证模型服务的 `llm` 子命令，以及用于构建和查询
-MCU 知识库的 `kb` 子命令。故障诊断功能尚未实现。
+当前提供使用说明、版本查询、用于验证模型服务的 `llm` 子命令、用于构建和查询 MCU
+知识库的 `kb` 子命令，以及用于运行 MCU 诊断工具的 `diag` 子命令。诊断工具产出的是
+中间结果，完整的诊断报告与模型分析尚未实现。
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Any, List, Mapping, Optional, Sequence
+
+from jsonschema import Draft202012Validator
 
 from airbornediag import __version__
 from airbornediag.config import ConfigError, load_llm_config
@@ -35,6 +39,7 @@ from airbornediag.llm import (
     MindIEClient,
     build_chat_prompt,
 )
+from airbornediag.mcu import Basis, DiagnosisResult, run_tools, to_jsonable
 
 PROG = "airbornediag"
 
@@ -47,6 +52,17 @@ EXIT_HTTP = 5
 EXIT_RESPONSE = 6
 EXIT_KB_DATA = 7
 EXIT_KB_INDEX = 8
+# 记录本身合规，但芯片或全部检测对象都不在本版支持范围内，没有任何工具运行。
+EXIT_UNSUPPORTED = 9
+
+# 输入契约的 Schema。校验规则以 Schema 为准，此处不重复维护字段约束。
+DEFAULT_RECORD_SCHEMA = Path("schemas/fault-record.schema.json")
+# 一条记录最多列出多少条 Schema 校验错误，避免输出过长。
+SCHEMA_ERROR_LIMIT = 10
+
+
+class DiagInputError(Exception):
+    """故障记录文件缺失、不合 JSON，或未通过 Schema 校验。"""
 
 
 def _positive_int(raw: str) -> int:
@@ -65,7 +81,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=PROG,
         description="面向民机机载系统的智能故障诊断工具。",
-        epilog="当前提供模型服务调用验证与知识库构建、查询，故障诊断功能尚未实现。",
+        epilog=(
+            "当前提供模型服务调用验证、知识库构建与查询，以及 MCU 诊断工具；"
+            "完整的诊断报告与模型分析尚未实现。"
+        ),
     )
     parser.add_argument(
         "--version",
@@ -75,6 +94,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers = parser.add_subparsers(dest="command", metavar="命令")
+
+    diag = subparsers.add_parser(
+        "diag",
+        help="对一条故障记录运行 MCU 诊断工具并打印工具结果。",
+        description=(
+            "对一条故障记录运行本版 MCU 诊断工具，打印工具判断、观测依据、规则来源"
+            "与缺失信息。这是诊断流程的中间结果，不是完整诊断报告：候选根因与"
+            "知识检索由后续环节完成，本命令不访问模型服务。"
+        ),
+        epilog=(
+            "失败时按类型返回不同的退出码：{} 记录缺失、不合 JSON 或未通过 Schema "
+            "校验，{} 芯片或全部检测对象不在本版支持范围内。".format(
+                EXIT_CONFIG, EXIT_UNSUPPORTED
+            )
+        ),
+    )
+    diag.add_argument(
+        "record",
+        help="故障记录 JSON 文件的路径，例如 examples/REC-2026-0918-002.json。",
+    )
+    diag.add_argument(
+        "--json",
+        action="store_true",
+        help="以 JSON 输出工具结果，便于后续流程直接读取。",
+    )
+    diag.add_argument(
+        "--schema",
+        default=str(DEFAULT_RECORD_SCHEMA),
+        help="输入契约的 Schema 路径，默认为 {}。".format(DEFAULT_RECORD_SCHEMA),
+    )
 
     llm = subparsers.add_parser(
         "llm",
@@ -329,6 +378,151 @@ def _run_kb_query(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _read_json(path: Path, description: str) -> Any:
+    """读取 JSON 文件，失败时抛出带文件名的输入错误。"""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise DiagInputError("{}不存在：{}".format(description, path))
+    except (OSError, UnicodeDecodeError) as error:
+        raise DiagInputError("读取{} {} 失败：{}".format(description, path, error))
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as error:
+        raise DiagInputError("{} {} 不是合法 JSON：{}".format(description, path, error))
+
+
+def _load_record(record_path: Path, schema_path: Path) -> Mapping[str, Any]:
+    """读取故障记录并按输入契约的 Schema 校验。
+
+    字段约束以 Schema 为准，这里不重复实现字段规则。Schema 中的 format 关键字只在
+    安装了对应格式校验器时才执行，因此日期时间格式与报告校验一样，仍然只按字符串校验。
+    """
+    record = _read_json(record_path, "故障记录")
+    if not isinstance(record, dict):
+        raise DiagInputError("故障记录 {} 的顶层必须是 JSON 对象。".format(record_path))
+
+    schema = _read_json(schema_path, "Schema 文件")
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(record),
+        key=lambda item: item.json_path,
+    )
+    if errors:
+        lines = ["故障记录 {} 未通过 Schema 校验：".format(record_path)]
+        for error in errors[:SCHEMA_ERROR_LIMIT]:
+            message = error.message
+            if len(message) > 160:
+                message = message[:157] + "..."
+            lines.append("  - {}: {}".format(error.json_path, message))
+        if len(errors) > SCHEMA_ERROR_LIMIT:
+            lines.append("  - 另有 {} 条未列出".format(len(errors) - SCHEMA_ERROR_LIMIT))
+        raise DiagInputError("\n".join(lines))
+    return record
+
+
+def _format_basis(basis: Basis) -> str:
+    """依据的可读形式：文献出处，附对应的知识条目 id。"""
+    text = str(basis)
+    if basis.knowledge_refs:
+        text += "（知识条目 {}）".format("、".join(basis.knowledge_refs))
+    return text
+
+
+def _format_diagnosis(result: DiagnosisResult) -> str:
+    """把工具结果排成可读文本。"""
+    lines = [
+        "记录：{}".format(result.record_id or "（缺省）"),
+        "芯片：{}".format(result.chip or "（缺省）"),
+    ]
+    if not result.supported:
+        lines.append("")
+        lines.append("本次没有可用的诊断工具，未给出任何结论。")
+
+    for index, item in enumerate(result.tool_results, start=1):
+        lines.append("")
+        lines.append(
+            "[{}] {}    外设 {}    对象 {}".format(
+                index, item.tool, item.peripheral, item.target
+            )
+        )
+        lines.append("    使用字段：{}".format("、".join(item.used_fields) or "（无）"))
+
+        if item.confirmed_states:
+            lines.append("    确认状态：")
+            for state in item.confirmed_states:
+                lines.append("      - {}".format(state.id))
+                lines.append("        依据：{}".format(_format_basis(state.basis)))
+                lines.append("        证据：{}".format("、".join(state.evidence)))
+                lines.append("        {}".format(state.statement))
+
+        if item.inconsistencies:
+            lines.append("    输入矛盾：")
+            for conflict in item.inconsistencies:
+                lines.append("      - {}".format(conflict.id))
+                lines.append("        依据：{}".format(_format_basis(conflict.basis)))
+                lines.append("        证据：{}".format("、".join(conflict.evidence)))
+                lines.append("        {}".format(conflict.statement))
+
+        if item.insufficient_data:
+            lines.append("    缺失信息：")
+            for missing in item.insufficient_data:
+                lines.append("      - 缺少 {}".format(missing.missing))
+                if missing.basis is not None:
+                    lines.append("        判定依据：{}".format(_format_basis(missing.basis)))
+                lines.append("        {}".format(missing.reason))
+
+        if item.unsupported:
+            lines.append("    不支持：")
+            for unsupported in item.unsupported:
+                lines.append("      - {}".format(unsupported.subject))
+                lines.append("        {}".format(unsupported.reason))
+
+        if item.is_empty:
+            if item.used_fields:
+                lines.append("    本次未产生结论：已使用的字段未触发任何判据。")
+            else:
+                lines.append("    本次未产生结论：没有本工具可判读的寄存器位域。")
+            lines.append("    未触发判据不等于该外设正常。")
+
+    if result.unsupported:
+        lines.append("")
+        lines.append("本版不支持：")
+        for unsupported in result.unsupported:
+            lines.append("  - {}".format(unsupported.subject))
+            lines.append("    {}".format(unsupported.reason))
+
+    return "\n".join(lines)
+
+
+def _run_diag(args: argparse.Namespace) -> int:
+    """执行 diag 子命令，返回进程退出码。"""
+    try:
+        record = _load_record(Path(args.record), Path(args.schema))
+    except DiagInputError as error:
+        print("输入错误：{}".format(error), file=sys.stderr)
+        return EXIT_CONFIG
+
+    result = run_tools(record)
+
+    if args.json:
+        print(json.dumps(to_jsonable(result), ensure_ascii=False, indent=2))
+    else:
+        print(_format_diagnosis(result))
+
+    counts = result.counts()
+    print(
+        "工具结果：{}".format("，".join("{} {}".format(key, value) for key, value in counts.items())),
+        file=sys.stderr,
+    )
+    if not result.supported:
+        print("芯片或全部检测对象不在本版支持范围内，未运行任何工具。", file=sys.stderr)
+    print(
+        "说明：记录中未观测的字段、以及本版没有判据的字段，均视为未知，不作为正常。",
+        file=sys.stderr,
+    )
+    return EXIT_OK if result.supported else EXIT_UNSUPPORTED
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """命令行入口函数，返回进程退出码。"""
     parser = build_parser()
@@ -336,6 +530,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if args.command == "llm":
         return _run_llm(args)
+
+    if args.command == "diag":
+        return _run_diag(args)
 
     if args.command == "kb":
         if args.kb_command == "build":

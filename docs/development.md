@@ -56,7 +56,7 @@ python3.9 -m venv .venv
 | `airbornediag --help` | 退出码 0，输出 usage 与参数说明 |
 | `airbornediag --version` | 退出码 0，输出 `airbornediag 0.1.0` |
 | 仓库外目录执行 | 退出码 0，确认命令来自安装而非当前目录 |
-| `python -m pytest` | 200 passed（`test_cli.py` 4 + `test_contract_examples.py` 10 + `test_llm_prompt.py` 2 + `test_llm_config.py` 15 + `test_llm_client.py` 17 + `test_llm_cli.py` 12 + `test_knowledge_model.py` 37 + `test_knowledge_index.py` 33 + `test_knowledge_cli.py` 15 + `test_knowledge_search.py` 55） |
+| `python -m pytest` | 262 passed（`test_cli.py` 4 + `test_contract_examples.py` 10 + `test_llm_prompt.py` 2 + `test_llm_config.py` 15 + `test_llm_client.py` 17 + `test_llm_cli.py` 12 + `test_knowledge_model.py` 37 + `test_knowledge_index.py` 33 + `test_knowledge_cli.py` 15 + `test_knowledge_search.py` 55 + `test_mcu_flexcan2.py` 23 + `test_mcu_dspi.py` 14 + `test_mcu_tools.py` 15 + `test_diag_cli.py` 10） |
 | `python scripts/validate_contracts.py` | 退出码 0，并打印日期时间格式未执行的说明 |
 | `airbornediag llm --help` | 退出码 0，输出子命令说明 |
 | `airbornediag llm --prompt "你好"`（本机无 MindIE 服务） | 退出码 3，打印端点与连接失败原因；**未返回任何模拟回答** |
@@ -74,9 +74,10 @@ airbornediag --help
 airbornediag --version
 airbornediag llm --help      # 模型服务调用
 airbornediag kb --help       # 知识库构建与查询
+airbornediag diag --help     # MCU 诊断工具
 ```
 
-当前提供使用说明、版本查询与 `llm`、`kb` 两个子命令，诊断流程尚未实现；不带参数时打印帮助并返回退出码 0。
+当前提供使用说明、版本查询与 `llm`、`kb`、`diag` 三个子命令，完整诊断流程（知识检索接入、候选根因、报告生成）尚未实现；不带参数时打印帮助并返回退出码 0。
 
 各子命令的输出约定一致：**结果走标准输出，诊断信息（端点、索引路径、耗时等）走标准错误**，便于管道使用。
 
@@ -175,6 +176,55 @@ airbornediag kb --help       # 知识库构建与查询
 Windows 侧已按上述命令构建并查询通过：索引写入 22 条知识条目，代表性查询（中文、寄存器名、中英混排、按出处回查）均返回预期条目，连续三次构建后索引仍为 22 条、`id` 无重复；退出码 0/2/7/8 各路径均已实际触发确认。检索效果由 `tests/test_knowledge_search.py` 固化。
 
 **板端已验证通过**（2026-09-22）：`kb build` 写入 22 条，`kb query` 命中结果与 Windows 侧一致，详见下文"验证记录（RDC300I）"。
+
+## 诊断工具（diag）
+
+`diag` 读取一条故障记录，按规则分析记录中**已解码的位域**，输出工具结果：确认的状态、输入中的矛盾、因缺失而无法判定的内容，以及本版不支持的范围。每条状态与矛盾带观测证据与出处，缺失信息也带判定依据，出处包含手册定位与对应的知识条目 id。
+
+**不访问模型服务，也不使用知识检索**，可脱离两者单独运行；判据与知识条目的关联由 `basis.knowledge_refs` 表达，需要展开条目内容时用 `kb query`。
+
+### 使用
+
+```powershell
+# 可读文本
+.\.venv\Scripts\airbornediag.exe diag examples\REC-2026-0918-002.json
+
+# 机器可读
+.\.venv\Scripts\airbornediag.exe diag examples\REC-2026-0918-002.json --json
+
+# 换用其他输入契约文件（默认 schemas/fault-record.schema.json）
+.\.venv\Scripts\airbornediag.exe diag <记录文件> --schema <schema 文件>
+```
+
+结果输出到标准输出，汇总条数与说明输出到标准错误，与其他子命令一致。`--json` 的输出含 `supported` 字段：**它为 `false` 时表示本记录没有任何工具处理过，不能读成「未发现异常」**。
+
+### 支持范围
+
+- 芯片：MPC5554。其他芯片不借用同名外设、寄存器与状态定义，一律报告为不支持。
+- 模块实例：手册确认存在的实例，即 FlexCAN2 的 `CAN_A`/`CAN_B`/`CAN_C` 与 DSPI 的 `DSPI_A`～`DSPI_D`。清单之外的实例名（如 `CAN_D`、`DSPI_E`）报告为不支持，不假定该实例存在。
+- 观测：只使用 `kind` 为 `register` 且给出了已解码位域（`fields`）的观测。以下三类都不参与判断，但报告方式不同——**已观测而本版没有判据**的位域或寄存器按不支持列出并附观测 id，不得读成未观测；只有原始值（`value`）、寄存器名不带模块实例前缀的观测按不支持报告；`can_frame`/`spi_transfer`/`timeout` 等没有判据的观测种类报告为未使用。
+- 同一字段出现多个不同取值时统一报为「存在多个不同取值，无法合并判断」：本版不比较观测时刻、不做跨观测的时序分析，既不挑一个取值当作当前值，也不声称这些取值来自不同采集时刻。
+- 判据、取值写法与适用条件见 [scenarios.md](scenarios.md)。
+
+### 退出码
+
+| 退出码 | 含义 |
+|---|---|
+| 0 | 运行完成；**结果为「未判定」「无结论」也是 0**，是否得出结论要看输出内容 |
+| 2 | 记录文件缺失、不是合法 JSON、未通过 Schema 校验，或 `--schema` 指向的文件不可读 |
+| 9 | 记录合规，但芯片或全部检测对象不在本版支持范围内，没有运行任何工具 |
+
+3～8 分别属于 `llm` 与 `kb` 子命令，`diag` 不使用。
+
+### 依赖
+
+**未新增依赖。** 输入校验复用运行期已有的 `jsonschema` 与 `schemas/fault-record.schema.json`，工具本身只用标准库，`wheelhouse/` 无需变更。
+
+### 验证情况
+
+Windows 侧已实际执行：两份示例记录（`examples/REC-2026-0918-001.json`、`REC-2026-0918-002.json`）退出码 0 并打印出与 [scenarios.md](scenarios.md) 一致的结论与缺失项；不支持的芯片记录退出码 9；Schema 不合规、文件缺失、JSON 非法、Schema 文件缺失四条路径均退出码 2 并指出具体路径或原因。判据行为由 `tests/test_mcu_flexcan2.py`、`tests/test_mcu_dspi.py`、`tests/test_mcu_tools.py`、`tests/test_diag_cli.py` 固化，其中 `test_mcu_tools.py` 校验每条依据引用的知识条目 id 在 `knowledge/curated/` 中确实存在。
+
+**板端已验证通过**（2026-09-23）：两份示例记录在 RDC300I 上的输出与退出码与 Windows 侧一致，详见下文"验证记录（RDC300I）"。
 
 ## 模型服务调用（MindIE）
 
@@ -318,7 +368,16 @@ python -m pip download -d wheelhouse --only-binary=:all: \
 
    构建应打印写入 22 条知识条目，查询应打印命中条目及其依据。退出码含义见"知识库构建与检索"；退出码 8 且提示不支持 FTS5 表示该解释器的 SQLite 缺少 FTS5 支持。
 
-6. 验证真实模型服务调用（`AIRBORNEDIAG_LLM_*` 未配置时使用默认的 `http://127.0.0.1:1025/generate`）：
+6. 验证诊断工具（不依赖模型服务，也不依赖知识索引）：
+
+   ```bash
+   .venv/bin/airbornediag diag examples/REC-2026-0918-002.json; echo "exit=$?"
+   .venv/bin/airbornediag diag examples/REC-2026-0918-001.json --json; echo "exit=$?"
+   ```
+
+   两份示例记录应退出码 0，并打印出与 Windows 侧相同的确认状态与缺失项（`--json` 的输出可直接与 Windows 侧输出对比）。退出码含义见"诊断工具（diag）"。
+
+7. 验证真实模型服务调用（`AIRBORNEDIAG_LLM_*` 未配置时使用默认的 `http://127.0.0.1:1025/generate`）：
 
    ```bash
    .venv/bin/airbornediag llm --prompt "你好"; echo "exit=$?"
@@ -375,6 +434,18 @@ python -m pip download -d wheelhouse --only-binary=:all: \
 
 板端 SQLite 3.37.2 的 FTS5 行为与 Windows 侧一致，索引无需随源码复制，在板端重建即可。未收集：板端逐条查询的完整输出；依赖无需重装（本轮未新增依赖），未记录板端当时的依赖版本。
 
+**已完成（2026-09-23，诊断工具之后）**：
+
+同步源码后执行第 6 步与完整测试，结果与 Windows 一致（本轮未新增依赖，无需重装，`wheelhouse/` 未变更）：
+
+| 项 | 结果 |
+|---|---|
+| `python -m pytest` | 全部通过（262 项：CLI 4 + 契约 10 + 模型调用 46 + 知识库 140 + 诊断工具 62） |
+| `diag examples/REC-2026-0918-002.json`（第 6 步） | 退出码 0，与 Windows 侧一致：3 条确认状态、2 条缺失信息、4 条不支持项（`CAN_A.ECR` 的 `RXECTR`；`CAN_A.ESR` 的 `TXWRN`/`RXWRN`/`IDLE`/`TXRX`/`BOFFINT`；`CAN_A.CR` 的 `BOFFMSK`；观测种类 `can_frame`/`timeout`） |
+| `diag examples/REC-2026-0918-001.json --json`（第 6 步） | 退出码 0，与 Windows 侧输出一致 |
+
+未收集：板端输出原文。`diag` 不访问模型服务，也不依赖知识索引，因此本步与第 5 步互不影响。
+
 ### 备用方案（未验证）
 
 - **可编辑安装失败**（板端 pip 为 21.3.1，可编辑安装依赖 PEP 660，是 pip 21.3 才引入的能力）：改为先安装构建后端，再关闭构建隔离重试。
@@ -398,13 +469,14 @@ python -m pip download -d wheelhouse --only-binary=:all: \
 - **Windows 直连板端模型服务**：已验证的真实调用在板端本机执行，Windows 到板端 1025 端口的连通性仍未验证（`docs/architecture.md` 早有此遗留项）；
 - `AIRBORNEDIAG_LLM_API_KEY` 非空时的认证分支，从未执行过；
 - 模型服务的非默认配置：只验证了默认的服务地址、接口路径与模型名；
-- 模型回答的内容质量与诊断适用性。
+- 模型回答的内容质量与诊断适用性；
+- 判据在真实设备记录上的表现：工具只在构造的模拟记录上验证过，没有真实控制器记录的判据验证。
 
-已验证的范围：Python 包在 Windows 与 RDC300I 上的安装、命令行 `--help`/`--version`/`llm`/`kb` 的输出与退出码、测试执行、契约校验脚本在两端的结果、模型调用在假服务上的成功与失败路径、知识库在两端（Windows 与 RDC300I）的构建与检索效果，以及**对真实 MindIE 服务的一次成功调用**。
+已验证的范围：Python 包在 Windows 与 RDC300I 上的安装、命令行 `--help`/`--version`/`llm`/`kb`/`diag` 的输出与退出码、测试执行、契约校验脚本在两端的结果、模型调用在假服务上的成功与失败路径、知识库在两端（Windows 与 RDC300I）的构建与检索效果、**`diag` 在两端对示例记录的判据行为及在 Windows 上对构造记录的判据行为**，以及**对真实 MindIE 服务的一次成功调用**。
 
 以下内容**不在验证范围内**，不能由上述结果推断为通过：
 
 - 真实模型调用的回答质量。**接口调用成功不等于诊断结论正确**，生成报告成功也不等于诊断正确；
-- 故障 JSON、诊断流程与诊断结论的正确性；
+- 完整诊断流程与最终诊断结论的正确性：目前只验证了各工具对构造记录的判断，工具结果之上的知识检索、候选根因与报告生成尚未实现；
 - 知识库的覆盖完整性：本轮只整理了首批场景（FC-01、FC-02、DS-01、DS-02）所需的内容，未覆盖手册的其他章节，也未覆盖 TMS320F28335；
 - 板端系统 Python、MindIE 容器与 CANN 环境的行为（本工程未修改这些环境）。
