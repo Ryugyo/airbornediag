@@ -65,7 +65,8 @@ def test_diagnostics_go_to_stderr_and_payload_to_stdout() -> None:
     result = run_cli("diag", str(EXAMPLES / "REC-2026-0918-002.json"))
 
     assert "工具结果：" in result.stderr
-    assert "未列出的字段表示未观测" in result.stderr
+    # 未支持字段不能被描述成未观测：说明里两者分开表述。
+    assert "本版没有判据的字段" in result.stderr
     assert "工具结果：" not in result.stdout
 
 

@@ -481,7 +481,7 @@ def _format_diagnosis(result: DiagnosisResult) -> str:
             if item.used_fields:
                 lines.append("    本次未产生结论：已使用的字段未触发任何判据。")
             else:
-                lines.append("    本次未产生结论：记录中没有本工具可用的观测。")
+                lines.append("    本次未产生结论：没有本工具可判读的寄存器位域。")
             lines.append("    未触发判据不等于该外设正常。")
 
     if result.unsupported:
@@ -516,7 +516,10 @@ def _run_diag(args: argparse.Namespace) -> int:
     )
     if not result.supported:
         print("芯片或全部检测对象不在本版支持范围内，未运行任何工具。", file=sys.stderr)
-    print("说明：未列出的字段表示未观测，视为未知，不作为正常。", file=sys.stderr)
+    print(
+        "说明：记录中未观测的字段、以及本版没有判据的字段，均视为未知，不作为正常。",
+        file=sys.stderr,
+    )
     return EXIT_OK if result.supported else EXIT_UNSUPPORTED
 
 

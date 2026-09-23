@@ -19,6 +19,10 @@ CHIP = "MPC5554"
 # 本芯片可用的外设工具。新增外设时在此登记，分派逻辑不用改。
 TOOLS = (flexcan2, dspi)
 
+# 手册确认存在的模块实例。各工具按手册清单声明，这里汇总用于报告支持范围：
+# 记录里出现清单外的实例名时按不支持报告，不假定该实例存在。
+SUPPORTED_INSTANCES = tuple(name for tool in TOOLS for name in tool.INSTANCES)
+
 
 def supports_target(name: str) -> bool:
     """该模块实例是否由本芯片的某个工具处理。"""
@@ -36,4 +40,12 @@ def analyse(view: RecordView) -> List[ToolResult]:
     return results
 
 
-__all__ = ["CHIP", "TOOLS", "analyse", "dspi", "flexcan2", "supports_target"]
+__all__ = [
+    "CHIP",
+    "SUPPORTED_INSTANCES",
+    "TOOLS",
+    "analyse",
+    "dspi",
+    "flexcan2",
+    "supports_target",
+]

@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 
 from airbornediag.mcu.model import (
     Basis,
@@ -28,16 +28,30 @@ from airbornediag.mcu.model import (
 from airbornediag.mcu.record import (
     FieldReading,
     RecordView,
+    RegisterObservation,
     field_pairs,
     flag_value,
     resolve_field,
+    uncriterioned_fields,
+    unmergeable_item,
 )
 
 TOOL = "mpc5554.dspi"
 PERIPHERAL = "DSPI"
 CHIP = "MPC5554"
-TARGET_PATTERN = re.compile(r"^DSPI_[A-Z0-9]+$")
 SOURCE = "MPC5554_RM"
+
+# 手册 1.5.16：MPC5554 含四个 DSPI 模块（MPC5553 为三个）。实例清单按手册核对，
+# 本版只处理这四个；记录中出现其它实例名时按不支持报告，不假定它存在。
+INSTANCES = ("DSPI_A", "DSPI_B", "DSPI_C", "DSPI_D")
+TARGET_PATTERN = re.compile(r"^(?:{})$".format("|".join(INSTANCES)))
+
+# 本版有位域判据的字段：寄存器名 -> 字段名。用于把「已观测但本版没有判据」与
+# 「未观测」区分开。
+CRITERION_FIELDS = {
+    "SR": ("TFUF", "RFOF", "TXRXS"),
+    "MCR": ("MSTR",),
+}
 
 _SR_LOCATOR = "20.3.2.4, Table 20-6"
 _MCR_LOCATOR = "20.3.2.1, Table 20-3"
@@ -54,6 +68,7 @@ _BASIS_TFUF_MODE = Basis(
 _BASIS_TFUF = Basis(SOURCE, _SR_LOCATOR, ("MPC5554-DSPI-SR-TFUF",))
 _BASIS_RFOF = Basis(SOURCE, _SR_LOCATOR, ("MPC5554-DSPI-SR-FIFO-FLAGS",))
 _BASIS_TXRXS = Basis(SOURCE, _RUNSTATE_LOCATOR, ("MPC5554-DSPI-SR-TXRXS",))
+_BASIS_MSTR = Basis(SOURCE, _MCR_LOCATOR, ("MPC5554-DSPI-MCR-MSTR",))
 _BASIS_SCOPE = Basis(SOURCE, _CHAPTER_LOCATOR, ("MPC5554-DSPI-CHAPTER-SCOPE",))
 
 _CONFLICT_ID = "DS-TFUF-MODE-CONFLICT"
@@ -77,6 +92,37 @@ def _unreadable_item(target: str, register: str, field: str) -> UnsupportedItem:
             "因此该观测不参与判断。"
         ),
     )
+
+
+def _unsupported_field_items(target: str, observations: Tuple[RegisterObservation, ...]):
+    """已观测但本版没有判据的寄存器与位域。
+
+    这些取值出现在记录里，只是本版没有对应判据；报告时不能说成「未观测」。
+    """
+    items = []
+    for register, fields, observation_ids in uncriterioned_fields(observations, CRITERION_FIELDS):
+        known = register in CRITERION_FIELDS
+        items.append(
+            UnsupportedItem(
+                subject=(
+                    "{}.{} 的位域 {}".format(target, register, "、".join(fields))
+                    if known
+                    else "{}.{} 的观测".format(target, register)
+                ),
+                reason=(
+                    "记录中已观测到 {}.{} 的 {}（观测 {}），但本版{}的判据，"
+                    "因此它们不参与判断。不支持表示本版没有依据，"
+                    "不等于这些取值未观测，也不等于取值正常。".format(
+                        target,
+                        register,
+                        "、".join(fields),
+                        "、".join(observation_ids),
+                        "没有这些位域" if known else "没有该寄存器",
+                    )
+                ),
+            )
+        )
+    return items
 
 
 def analyse_target(view: RecordView, target: str) -> ToolResult:
@@ -106,18 +152,20 @@ def analyse_target(view: RecordView, target: str) -> ToolResult:
     rfof = read("SR", "RFOF")
     txrxs = read("SR", "TXRXS")
 
+    # 同一字段存在多个不同取值时统一报为不可合并：本版不做时序分析，无法确定哪个取值
+    # 对应当前状态，但不把这些取值说成未观测。
+    for reading, subject, consequence, basis in (
+        (mstr, "可用于判定 DSPI 工作模式的时刻", "本次无法确定该 DSPI 的工作模式。", _BASIS_MSTR),
+        (tfuf, "可用于判定 TFUF 对应工作模式的时刻", "本次不给出 TFUF 相关的状态结论。", _BASIS_TFUF),
+        (rfof, "可用于判定 RX FIFO 是否溢出的观测", "本次不给出 RX FIFO 溢出结论。", _BASIS_RFOF),
+        (txrxs, "可用于判定 TX/RX 运行状态的观测", "本次不给出 TX/RX 运行状态结论。", _BASIS_TXRXS),
+    ):
+        if reading is not None and reading.conflicting:
+            missing.append(unmergeable_item(subject, reading, consequence, basis))
+
     # --- DS-02：TFUF 与工作模式 ------------------------------------------
-    if tfuf is not None:
-        if tfuf.conflicting:
-            missing.append(
-                MissingItem(
-                    "可用于判定 TFUF 对应工作模式的时刻",
-                    "{} 的 TFUF 在不同采集时刻的取值不同（{}），无法判定该标志位"
-                    "对应的工作模式。".format(target, tfuf.describe()),
-                    basis=_BASIS_TFUF,
-                )
-            )
-        elif tfuf.value == 1:
+    if tfuf is not None and not tfuf.conflicting:
+        if tfuf.value == 1:
             if mstr is not None and mstr.value == 1:
                 conflicts.append(
                     Inconsistency(
@@ -126,8 +174,10 @@ def analyse_target(view: RecordView, target: str) -> ToolResult:
                             "{target}.SR 的 TFUF 置位表示发生了发送 FIFO 下溢，"
                             "但依据 Table 20-6，该下溢条件仅对工作在 SPI 从模式的 DSPI 检测；"
                             "{target}.MCR 的 MSTR 为 1 表示主机模式。两者不能同时成立，"
-                            "属输入自相矛盾。在矛盾澄清之前，本工具不对该 DSPI 给出任何"
-                            "状态结论。".format(target=target)
+                            "属输入自相矛盾。在矛盾澄清之前，本工具不给出任何依赖 TFUF 与 "
+                            "MSTR 的状态结论；同一次读取中不依赖这两个字段的判据不受影响。".format(
+                                target=target
+                            )
                         ),
                         evidence=unique_in_order(list(tfuf.evidence) + list(mstr.evidence)),
                         basis=_BASIS_TFUF_MODE,
@@ -147,7 +197,7 @@ def analyse_target(view: RecordView, target: str) -> ToolResult:
                         basis=_BASIS_TFUF,
                     )
                 )
-            else:
+            elif mstr is None or (mstr.value is None and not mstr.conflicting):
                 missing.append(
                     MissingItem(
                         "{}.MCR 的 MSTR 取值".format(target),
@@ -220,17 +270,20 @@ def analyse_target(view: RecordView, target: str) -> ToolResult:
             )
         )
 
-    # 输入自相矛盾时不下任何 DSPI 结论。
+    # 输入自相矛盾时只抑制依赖矛盾数据的判断：矛盾涉及 TFUF 与 MSTR 两个字段，
+    # 基于它们的结论不输出；其它位域的判据不依赖这两个字段，证据独立，仍然有效。
     if any(item.id == _CONFLICT_ID for item in conflicts):
         missing.append(
             MissingItem(
                 "澄清 TFUF 与 MSTR 矛盾所需的证据",
-                "在矛盾澄清之前，本工具不基于该记录给出任何 DSPI 状态结论，"
-                "因此本次没有确认状态。",
+                "在矛盾澄清之前，本工具不给出任何依赖 TFUF 与 MSTR 的状态结论。"
+                "同一次读取中不依赖这两个字段、证据独立的判据（RX FIFO 溢出、"
+                "TX/RX 运行状态）仍然成立；但该次读取整体是否自洽尚未确认。",
                 basis=_BASIS_TFUF_MODE,
             )
         )
-        states = []
+
+    unsupported.extend(_unsupported_field_items(target, observations))
 
     return ToolResult(
         tool=TOOL,

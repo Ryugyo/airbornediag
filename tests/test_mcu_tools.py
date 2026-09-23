@@ -56,6 +56,23 @@ def test_unsupported_target_is_reported_and_not_analysed() -> None:
     assert result.tool_results == ()
     assert "eMIOS_0" in result.unsupported[0].subject
     assert "不等于该对象正常" in result.unsupported[0].reason
+    # 支持范围按手册确认的实例清单写明，不写成通配形式。
+    assert "CAN_A、CAN_B、CAN_C、DSPI_A、DSPI_B、DSPI_C、DSPI_D" in result.unsupported[0].reason
+
+
+@pytest.mark.parametrize("name", ["CAN_Z", "DSPI_E", "CAN_D", "can_a"])
+def test_module_instance_absent_from_the_manual_is_not_analysed(name: str) -> None:
+    """手册中没有的模块实例不假定其存在：不跑工具，也不给结论。"""
+    result = run_tools(
+        record(
+            target=name,
+            observations=[register("OBS-1", "{}.ESR".format(name), {"FLTCONF": "bus_off"}, target=name)],
+        )
+    )
+
+    assert result.supported is False
+    assert result.tool_results == ()
+    assert name in result.unsupported[0].subject
 
 
 def test_raw_value_only_observations_are_reported_as_unsupported() -> None:

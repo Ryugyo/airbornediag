@@ -86,7 +86,8 @@ class ToolResult:
     chip: str
     peripheral: str
     target: str
-    # 本次实际使用的字段，形如 CAN_A.ESR.FLTCONF。未列出的字段表示未观测。
+    # 本次实际使用的字段，形如 CAN_A.ESR.FLTCONF。未列出的字段表示未观测，或本版没有
+    # 该位域的判据（后者作为不支持项单独列出）。
     used_fields: Tuple[str, ...] = ()
     confirmed_states: Tuple[ConfirmedState, ...] = ()
     inconsistencies: Tuple[Inconsistency, ...] = ()

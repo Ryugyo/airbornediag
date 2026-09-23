@@ -136,8 +136,8 @@ def test_run_state_reports_both_directions() -> None:
     assert "不说明该状态是否符合预期" in stopped_statement
 
 
-def test_contradiction_suppresses_the_other_conclusions() -> None:
-    """出现矛盾时，同一记录中其他已成立的具体条件也不作为结论输出。"""
+def test_contradiction_suppresses_only_the_dependent_judgement() -> None:
+    """出现矛盾时只抑制依赖矛盾数据的判断，证据独立的具体条件仍然输出。"""
     result = analyse(
         [
             mcr("OBS-1", {"MSTR": 1}, semantics="instantaneous"),
@@ -146,7 +146,11 @@ def test_contradiction_suppresses_the_other_conclusions() -> None:
     )
 
     assert conflict_ids(result) == ["DS-TFUF-MODE-CONFLICT"]
-    assert result.confirmed_states == ()
+    # TFUF 与 MSTR 是矛盾的两个字段，基于它们的结论不输出。
+    assert "DS-TFUF-UNDERFLOW" not in state_ids(result)
+    # RX FIFO 溢出与运行状态不依赖这两个字段，证据独立，仍然成立。
+    assert state_ids(result) == ["DS-RFOF-OVERFLOW", "DS-TX-RX-RUN-STATE"]
+    assert "不依赖这两个字段" in missing_texts(result)
 
 
 def test_unreadable_flag_value_is_unsupported() -> None:
@@ -154,3 +158,71 @@ def test_unreadable_flag_value_is_unsupported() -> None:
 
     assert result.confirmed_states == ()
     assert "DSPI_C.SR.RFOF 的取值" in [item.subject for item in result.unsupported]
+
+
+# --- 已观测但本版没有判据的位域 ---------------------------------------------
+
+
+def test_field_without_criterion_is_reported_as_observed_not_missing() -> None:
+    """SR 的其它位域本版没有判据：报为不支持，不能说成未观测。"""
+    result = analyse([sr("OBS-1", {"TCF": 1, "EOQF": 0}, semantics="instantaneous")])
+
+    assert result.confirmed_states == ()
+    item = result.unsupported[0]
+    assert item.subject == "DSPI_C.SR 的位域 TCF、EOQF"
+    # 该观测确实在记录里，只是没有判据：不能按「未观测」处理。
+    assert "记录中已观测到 DSPI_C.SR" in item.reason
+    assert "OBS-1" in item.reason
+    assert "没有这些位域" in item.reason
+    # 有观测就不该报成缺少观测。
+    assert result.insufficient_data == ()
+    # 未支持字段不进入 used_fields。
+    assert result.used_fields == ()
+
+
+def test_register_without_criterion_is_reported_as_observed() -> None:
+    """本版没有判据的寄存器同样按已观测报告。"""
+    result = analyse([register("OBS-1", "DSPI_C.CTAR", {"PCSSCK": 1}, target=TARGET)])
+
+    assert result.unsupported[0].subject == "DSPI_C.CTAR 的观测"
+    assert "没有该寄存器" in result.unsupported[0].reason
+
+
+# --- 同一字段存在多个不同取值 -----------------------------------------------
+
+
+def test_conflicting_flag_values_are_not_claimed_to_be_from_different_moments() -> None:
+    """取值不同时只报「存在多个不同取值」，不声称它们来自不同采集时刻。"""
+    result = analyse(
+        [
+            sr("OBS-1", {"RFOF": 1}, semantics="instantaneous", at="2026-09-18T10:00:00+08:00"),
+            sr("OBS-2", {"RFOF": 0}, semantics="instantaneous", at="2026-09-18T10:00:00+08:00"),
+        ]
+    )
+
+    assert result.confirmed_states == ()
+    text = missing_texts(result)
+    assert "可用于判定 RX FIFO 是否溢出的观测" in text
+    assert "存在多个不同取值" in text
+    assert "无法把这些取值合并成一个可判定的取值" in text
+    # 两条观测的采集时刻相同，声称「不同采集时刻」没有依据。
+    assert "不同采集时刻" not in text
+
+
+def test_mstr_conflict_is_not_described_as_absent() -> None:
+    """MSTR 有两个取值时报不可合并，而不是报成缺少 MSTR。"""
+    result = analyse(
+        [
+            mcr("OBS-1", {"MSTR": 1}, semantics="instantaneous"),
+            mcr("OBS-2", {"MSTR": 0}, semantics="instantaneous"),
+            sr("OBS-3", {"TFUF": 1}, semantics="instantaneous"),
+        ]
+    )
+
+    assert result.confirmed_states == ()
+    assert result.inconsistencies == ()
+    text = missing_texts(result)
+    assert "可用于判定 DSPI 工作模式的时刻" in text
+    assert "存在多个不同取值（OBS-1 为 1、OBS-2 为 0）" in text
+    # 取值冲突不是「没有观测到 MSTR」。
+    assert "记录中没有可用的 MSTR 取值" not in text

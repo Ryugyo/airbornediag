@@ -124,25 +124,113 @@ def test_error_active_state_is_not_a_health_statement() -> None:
 
 
 def test_different_fltconf_values_are_not_merged() -> None:
-    """两个时刻的 FLTCONF 取值不同：不挑一个当作当前状态。"""
+    """两条观测的 FLTCONF 取值不同：不挑一个当作当前状态，也不声称来自不同时刻。"""
     result = analyse(
         [
-            register("OBS-1", "CAN_A.ESR", {"FLTCONF": "error_active"}, semantics="instantaneous"),
-            register("OBS-2", "CAN_A.ESR", {"FLTCONF": "bus_off"}, semantics="instantaneous"),
+            register(
+                "OBS-1",
+                "CAN_A.ESR",
+                {"FLTCONF": "error_active"},
+                semantics="instantaneous",
+                at="2026-09-18T10:00:00+08:00",
+                capture_id="CAP-1",
+            ),
+            register(
+                "OBS-2",
+                "CAN_A.ESR",
+                {"FLTCONF": "bus_off"},
+                semantics="instantaneous",
+                at="2026-09-18T10:00:00+08:00",
+                capture_id="CAP-1",
+            ),
         ]
     )
 
     assert result.confirmed_states == ()
     assert "同一时刻的 FLTCONF 观测" in [item.missing for item in result.insufficient_data]
-    assert "不把其中任一取值当作当前状态" in missing_texts(result)
+    text = missing_texts(result)
+    assert "不把其中任一取值当作当前状态" in text
+    assert "存在多个不同取值（OBS-1 为 error_active、OBS-2 为 bus_off）" in text
+    # 本版不比较观测时刻，因此不能声称两个取值来自不同采集时刻。
+    assert "不同采集时刻" not in text
+
+
+def test_fltconf_marked_since_last_read_is_an_input_contradiction() -> None:
+    """FLTCONF 是状态位，标成读清除位与手册矛盾，且不得据此确认当前状态。"""
+    result = analyse(
+        [register("OBS-1", "CAN_A.ESR", {"FLTCONF": "bus_off"}, semantics="since_last_read")]
+    )
+
+    assert conflict_ids(result) == ["FC-FLTCONF-SEMANTICS-CONFLICT"]
+    assert result.confirmed_states == ()
+    statement = result.inconsistencies[0].statement
+    assert "FLTCONF 是状态位" in statement
+    assert "不能据它确认采集时刻的故障封闭状态" in statement
+
+
+def test_mislabeled_fltconf_reading_does_not_block_the_labeled_one() -> None:
+    """语义不符的观测被排除在归并之外；排除后取值唯一，仍可确认状态。"""
+    result = analyse(
+        [
+            register("OBS-1", "CAN_A.ESR", {"FLTCONF": "bus_off"}, semantics="instantaneous"),
+            # 取值不同：若把它一并归并，会变成「取值不一致」而无法判定。
+            register("OBS-2", "CAN_A.ESR", {"FLTCONF": "error_active"}, semantics="since_last_read"),
+            register("OBS-3", "CAN_A.CR", {"BOFFREC": 0}, semantics="instantaneous"),
+        ]
+    )
+
+    assert state_ids(result) == [
+        "FC-BUSOFF-BOFFREC-ENABLED",
+        "FC-BUSOFF-STATE",
+        "FC-BUSOFF-NO-ACK-ONLY",
+    ]
+    assert conflict_ids(result) == ["FC-FLTCONF-SEMANTICS-CONFLICT"]
+    # 语义不符的观测不出现在任何状态结论的观测依据里。
+    assert all("OBS-2" not in state.evidence for state in result.confirmed_states)
 
 
 def test_unreadable_fltconf_value_is_unsupported() -> None:
-    """取值无法按手册编码解释时不猜：报不支持，不下结论。"""
+    """取值无法按手册编码解释时不猜：报不支持，并列出本版支持的写法。"""
     result = analyse([register("OBS-1", "CAN_A.ESR", {"FLTCONF": 3}, semantics="instantaneous")])
 
     assert result.confirmed_states == ()
     assert "CAN_A.ESR.FLTCONF 的取值" in [item.subject for item in result.unsupported]
+    reason = result.unsupported[0].reason
+    assert "bus_off/bus-off/1x" in reason
+    assert "10、11" in reason
+
+
+# --- 已观测但本版没有判据的位域 ---------------------------------------------
+
+
+def test_field_without_criterion_is_reported_as_observed_not_missing() -> None:
+    """ESR 的状态位中本版只有 FLTCONF 有判据，其余按不支持报告，不说成未观测。"""
+    result = analyse(
+        [
+            register(
+                "OBS-1",
+                "CAN_A.ESR",
+                {"TXWRN": 1, "BOFFINT": 1},
+                semantics="instantaneous",
+            )
+        ]
+    )
+
+    assert result.confirmed_states == ()
+    assert result.insufficient_data == ()
+    item = result.unsupported[0]
+    assert item.subject == "CAN_A.ESR 的位域 TXWRN、BOFFINT"
+    assert "记录中已观测到 CAN_A.ESR" in item.reason
+    assert "OBS-1" in item.reason
+    assert "没有这些位域" in item.reason
+    assert result.used_fields == ()
+
+
+def test_register_without_criterion_is_reported_as_observed() -> None:
+    result = analyse([register("OBS-1", "CAN_A.IMASK1", {"BUF31M": 1}, semantics="instantaneous")])
+
+    assert result.unsupported[0].subject == "CAN_A.IMASK1 的观测"
+    assert "没有该寄存器" in result.unsupported[0].reason
 
 
 # --- ESR 读清除错误标志 ----------------------------------------------------

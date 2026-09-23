@@ -31,22 +31,39 @@ from airbornediag.mcu.record import (
     field_pairs,
     flag_value,
     resolve_field,
+    uncriterioned_fields,
+    unmergeable_item,
 )
 
 TOOL = "mpc5554.flexcan2"
 PERIPHERAL = "FlexCAN2"
 CHIP = "MPC5554"
-TARGET_PATTERN = re.compile(r"^CAN_[A-Z0-9]+$")
 SOURCE = "MPC5554_RM"
+
+# 手册 22.1：MPC5554 含三个 FlexCAN2 模块。实例清单按手册核对，本版只处理这三个；
+# 记录中出现其它实例名时按不支持报告，不假定它存在。
+INSTANCES = ("CAN_A", "CAN_B", "CAN_C")
+TARGET_PATTERN = re.compile(r"^(?:{})$".format("|".join(INSTANCES)))
 
 # 手册中 CANx_ESR 的读清除错误标志位（22.3.3.6，Table 22-11）。
 ERROR_FLAGS = ("BIT1ERR", "BIT0ERR", "ACKERR", "CRCERR", "FRMERR", "STFERR")
+
+# 本版有位域判据的字段：寄存器名 -> 字段名。用于把「已观测但本版没有判据」与
+# 「未观测」区分开：两者都不参与判断，但前者是记录里确实给出、被本版丢弃的取值。
+CRITERION_FIELDS = {
+    "ESR": ("FLTCONF",) + ERROR_FLAGS,
+    "CR": ("LOM", "BOFFREC"),
+    "ECR": ("TXECTR",),
+}
 
 # FLTCONF 的三种编码（22.3.3.6，Table 22-11）。取值的写法按手册的 00/01/1X 与
 # 示例记录使用的符号名各接受一种，不接受整数：该字段的位宽与编码未逐条核对入知识库。
 _BUS_OFF = ("bus_off", "bus-off", "1x")
 _ERROR_PASSIVE = ("error_passive", "error-passive", "01")
 _ERROR_ACTIVE = ("error_active", "error-active", "00")
+
+# 本版接受的 FLTCONF 写法，用于取值落在其外时给出明确提示。
+_FLTCONF_ACCEPTED = "bus_off/bus-off/1x、error_passive/error-passive/01、error_active/error-active/00"
 
 _ESR_LOCATOR = "22.3.3.6, Figure 22-8, Table 22-11"
 _CR_LOCATOR = "22.3.3.2, Table 22-8"
@@ -95,6 +112,51 @@ def _unreadable_item(target: str, register: str, field: str) -> UnsupportedItem:
     )
 
 
+def _fltconf_unsupported(target: str) -> UnsupportedItem:
+    """FLTCONF 取值不在本版支持的写法内时的提示。"""
+    return UnsupportedItem(
+        subject="{}.ESR.FLTCONF 的取值".format(target),
+        reason=(
+            "本版不把原始取值当作整数按位解释，FLTCONF 只接受手册编码与符号名这几组写法："
+            "{}（大小写不敏感）。手册中属于 1X 的其它位组合（10、11）本版尚未实现，"
+            "同样报为不支持。该取值不在支持的写法内，因此不参与判断："
+            "不支持表示本版没有依据，不等于该字段未观测，也不等于取值正常。".format(
+                _FLTCONF_ACCEPTED
+            )
+        ),
+    )
+
+
+def _unsupported_field_items(target: str, observations: Tuple[RegisterObservation, ...]):
+    """已观测但本版没有判据的寄存器与位域。
+
+    这些取值出现在记录里，只是本版没有对应判据；报告时不能说成「未观测」。
+    """
+    items = []
+    for register, fields, observation_ids in uncriterioned_fields(observations, CRITERION_FIELDS):
+        known = register in CRITERION_FIELDS
+        label = "{}.{} 的位域 {}".format(target, register, "、".join(fields)) if known else (
+            "{}.{} 的观测".format(target, register)
+        )
+        items.append(
+            UnsupportedItem(
+                subject=label,
+                reason=(
+                    "记录中已观测到 {}.{} 的 {}（观测 {}），但本版{}的判据，"
+                    "因此它们不参与判断。不支持表示本版没有依据，"
+                    "不等于这些取值未观测，也不等于取值正常。".format(
+                        target,
+                        register,
+                        "、".join(fields),
+                        "、".join(observation_ids),
+                        "没有这些位域" if known else "没有该寄存器",
+                    )
+                ),
+            )
+        )
+    return items
+
+
 def analyse_target(view: RecordView, target: str) -> ToolResult:
     """分析一个 FlexCAN2 模块实例，返回工具结果。"""
     observations = view.register_observations_for(target)
@@ -109,24 +171,46 @@ def analyse_target(view: RecordView, target: str) -> ToolResult:
 
     # --- FLTCONF：故障封闭状态 -------------------------------------------
     fltconf_pairs = field_pairs(observations, "FLTCONF", "ESR")
+    # FLTCONF 是状态位（22.3.3.6），契约要求状态位标注 instantaneous。标成
+    # since_last_read 与手册矛盾，这类观测的取值不用于确认采集时刻的状态。
+    fltconf_usable = tuple(
+        pair for pair in fltconf_pairs if pair[0].semantics != "since_last_read"
+    )
     fltconf: Optional[FieldReading] = None
     if fltconf_pairs:
         use("ESR", "FLTCONF")
-        fltconf = resolve_field(fltconf_pairs, fltconf_code)
-        if fltconf.unreadable:
-            unsupported.append(_unreadable_item(target, "ESR", "FLTCONF"))
-        if fltconf.conflicting:
-            missing.append(
-                MissingItem(
-                    "同一时刻的 FLTCONF 观测",
-                    "{} 的 FLTCONF 在不同采集时刻的取值不同（{}）。故障封闭状态随时间"
-                    "变化，而记录中没有可判定「当前」状态的时间基准，因此本次不给出"
-                    "故障封闭状态结论，也不把其中任一取值当作当前状态。".format(
-                        target, fltconf.describe()
+        mislabeled = tuple(
+            observation.observation_id
+            for observation, _ in fltconf_pairs
+            if observation.semantics == "since_last_read"
+        )
+        if mislabeled:
+            conflicts.append(
+                Inconsistency(
+                    id="FC-FLTCONF-SEMANTICS-CONFLICT",
+                    statement=(
+                        "观测 {} 把 FLTCONF 标注为 semantics=since_last_read（读清除位），"
+                        "但手册 22.3.3.6 规定 FLTCONF 是状态位、不被读取操作清除。"
+                        "两者不能同时成立：该取值不用于判断，也不能据它确认采集时刻的"
+                        "故障封闭状态。".format("、".join(mislabeled))
                     ),
-                    basis=_BASIS_FLTCONF,
+                    evidence=mislabeled,
+                    basis=_BASIS_FLAGS,
                 )
             )
+        if fltconf_usable:
+            fltconf = resolve_field(list(fltconf_usable), fltconf_code)
+            if fltconf.unreadable:
+                unsupported.append(_fltconf_unsupported(target))
+            if fltconf.conflicting:
+                missing.append(
+                    unmergeable_item(
+                        "同一时刻的 FLTCONF 观测",
+                        fltconf,
+                        "本次不给出故障封闭状态结论，也不把其中任一取值当作当前状态。",
+                        _BASIS_FLTCONF,
+                    )
+                )
 
     # --- LOM：只听模式 ----------------------------------------------------
     lom_pairs = field_pairs(observations, "LOM", "CR")
@@ -138,11 +222,11 @@ def analyse_target(view: RecordView, target: str) -> ToolResult:
             unsupported.append(_unreadable_item(target, "CR", "LOM"))
         if lom.conflicting:
             missing.append(
-                MissingItem(
+                unmergeable_item(
                     "可用于判定只听模式的时刻",
-                    "{} 的 LOM 在不同采集时刻的取值不同（{}），无法判定采集时刻的"
-                    "配置。".format(target, lom.describe()),
-                    basis=_BASIS_LOM,
+                    lom,
+                    "本次无法判定该模块的只听模式配置。",
+                    _BASIS_LOM,
                 )
             )
 
@@ -155,11 +239,11 @@ def analyse_target(view: RecordView, target: str) -> ToolResult:
             unsupported.append(_unreadable_item(target, "CR", "BOFFREC"))
         if boffrec.conflicting:
             missing.append(
-                MissingItem(
+                unmergeable_item(
                     "可用于判定总线关闭恢复方式的时刻",
-                    "{} 的 BOFFREC 在不同采集时刻的取值不同（{}），无法判定采集时刻的"
-                    "配置。".format(target, boffrec.describe()),
-                    basis=_BASIS_BOFFREC,
+                    boffrec,
+                    "本次无法判定该模块的总线关闭恢复方式。",
+                    _BASIS_BOFFREC,
                 )
             )
         elif boffrec.value == 1:
@@ -273,11 +357,11 @@ def analyse_target(view: RecordView, target: str) -> ToolResult:
             )
 
     # --- TXECTR 的语义 ----------------------------------------------------
-    txectr_pairs = field_pairs(observations, "TXECTR")
+    txectr_pairs = field_pairs(observations, "TXECTR", "ECR")
     if bus_off and txectr_pairs:
         txectr_observation = txectr_pairs[0][0]
-        use(txectr_observation.register_name, "TXECTR")
-        fltconf_observation = _first_observation(observations, "ESR", "FLTCONF")
+        use("ECR", "TXECTR")
+        fltconf_observation = fltconf_usable[0][0] if fltconf_usable else None
         missing.append(
             MissingItem(
                 "与 FLTCONF 处于同一时刻的 TXECTR 观测",
@@ -371,6 +455,8 @@ def analyse_target(view: RecordView, target: str) -> ToolResult:
             )
         )
 
+    unsupported.extend(_unsupported_field_items(target, observations))
+
     return ToolResult(
         tool=TOOL,
         chip=CHIP,
@@ -382,15 +468,6 @@ def analyse_target(view: RecordView, target: str) -> ToolResult:
         insufficient_data=tuple(missing),
         unsupported=tuple(unsupported),
     )
-
-
-def _first_observation(
-    observations: Tuple[RegisterObservation, ...], register_name: str, field_name: str
-) -> Optional[RegisterObservation]:
-    for observation in observations:
-        if observation.register_name == register_name and observation.has_field(field_name):
-            return observation
-    return None
 
 
 def _snapshot_statement(

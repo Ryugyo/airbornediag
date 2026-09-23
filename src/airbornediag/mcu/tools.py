@@ -36,9 +36,11 @@ def _record_unsupported(view: RecordView, module: Any) -> Iterator[UnsupportedIt
             yield UnsupportedItem(
                 subject="检测对象 {}".format(target),
                 reason=(
-                    "本版 {} 的工具只处理 CAN_x、DSPI_x 形式的模块实例，该对象没有"
-                    "对应判据，因此不参与判断。不支持表示本版没有依据，"
-                    "不等于该对象正常。".format(module.CHIP)
+                    "本版 {} 的工具只处理手册确认存在的模块实例（{}）。该对象不在其中，"
+                    "没有对应判据，因此不参与判断。不支持表示本版没有依据，"
+                    "不等于该对象正常。".format(
+                        module.CHIP, "、".join(module.SUPPORTED_INSTANCES)
+                    )
                 ),
             )
 

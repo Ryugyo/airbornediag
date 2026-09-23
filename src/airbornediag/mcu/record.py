@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, List, Mapping, Optional, Tuple
 
-from airbornediag.mcu.model import McuRecordError
+from airbornediag.mcu.model import Basis, McuRecordError, MissingItem
 
 # register 观测的字段名形如 CAN_A.ESR，模块实例与寄存器名以点分隔。
 REGISTER_SEPARATOR = "."
@@ -103,6 +103,48 @@ class FieldReading:
         return "、".join(
             "{} 为 {}".format(observation_id, value) for observation_id, value in self.readings
         )
+
+
+def unmergeable_item(
+    subject: str, reading: FieldReading, consequence: str, basis: Basis
+) -> MissingItem:
+    """同一字段存在多个不同取值时的缺失项。
+
+    本版不比较观测时刻，也不做跨观测的时序分析，因此不同取值无法合并成一个可判定的
+    取值。这里只描述「存在多个不同取值」，不声称它们来自不同的采集时刻——记录里可能
+    根本没有可比较的时刻，那样的断言没有依据。
+    """
+    return MissingItem(
+        subject,
+        "存在多个不同取值（{}）。本版不比较观测时刻，也不做跨观测的时序分析，"
+        "因此无法把这些取值合并成一个可判定的取值，{}".format(reading.describe(), consequence),
+        basis=basis,
+    )
+
+
+def uncriterioned_fields(
+    observations: Tuple[RegisterObservation, ...],
+    criteria: Mapping[str, Tuple[str, ...]],
+) -> List[Tuple[str, Tuple[str, ...], Tuple[str, ...]]]:
+    """已观测、但不在判据清单内的寄存器与位域。
+
+    `criteria` 是寄存器名到「本版有位域判据的字段名」的映射。返回
+    (寄存器名, 位域元组, 观测 id 元组) 的列表；寄存器不在映射中时，其全部已观测位域
+    都算在清单之外。
+
+    这些取值确实出现在记录里，只是本版没有对应判据，因此不能被描述成「未观测」。
+    """
+    grouped: dict = {}
+    for observation in observations:
+        known = criteria.get(observation.register_name)
+        observed = tuple(observation.fields)
+        extra = observed if known is None else tuple(name for name in observed if name not in known)
+        if not extra:
+            continue
+        grouped.setdefault((observation.register_name, extra), []).append(observation.observation_id)
+    return [
+        (register, extra, tuple(ids)) for (register, extra), ids in grouped.items()
+    ]
 
 
 def field_pairs(

@@ -56,7 +56,7 @@ python3.9 -m venv .venv
 | `airbornediag --help` | 退出码 0，输出 usage 与参数说明 |
 | `airbornediag --version` | 退出码 0，输出 `airbornediag 0.1.0` |
 | 仓库外目录执行 | 退出码 0，确认命令来自安装而非当前目录 |
-| `python -m pytest` | 250 passed（`test_cli.py` 4 + `test_contract_examples.py` 10 + `test_llm_prompt.py` 2 + `test_llm_config.py` 15 + `test_llm_client.py` 17 + `test_llm_cli.py` 12 + `test_knowledge_model.py` 37 + `test_knowledge_index.py` 33 + `test_knowledge_cli.py` 15 + `test_knowledge_search.py` 55 + `test_mcu_flexcan2.py` 19 + `test_mcu_dspi.py` 10 + `test_mcu_tools.py` 11 + `test_diag_cli.py` 10） |
+| `python -m pytest` | 262 passed（`test_cli.py` 4 + `test_contract_examples.py` 10 + `test_llm_prompt.py` 2 + `test_llm_config.py` 15 + `test_llm_client.py` 17 + `test_llm_cli.py` 12 + `test_knowledge_model.py` 37 + `test_knowledge_index.py` 33 + `test_knowledge_cli.py` 15 + `test_knowledge_search.py` 55 + `test_mcu_flexcan2.py` 23 + `test_mcu_dspi.py` 14 + `test_mcu_tools.py` 15 + `test_diag_cli.py` 10） |
 | `python scripts/validate_contracts.py` | 退出码 0，并打印日期时间格式未执行的说明 |
 | `airbornediag llm --help` | 退出码 0，输出子命令说明 |
 | `airbornediag llm --prompt "你好"`（本机无 MindIE 服务） | 退出码 3，打印端点与连接失败原因；**未返回任何模拟回答** |
@@ -201,9 +201,10 @@ Windows 侧已按上述命令构建并查询通过：索引写入 22 条知识�
 ### 支持范围
 
 - 芯片：MPC5554。其他芯片不借用同名外设、寄存器与状态定义，一律报告为不支持。
-- 外设：FlexCAN2（`CAN_x`）、DSPI（`DSPI_x`）。其他检测对象报告为不支持。
-- 观测：只使用 `kind` 为 `register` 且给出了已解码位域（`fields`）的观测。只给原始值（`value`）、寄存器名不带模块实例前缀、以及 `can_frame`/`spi_transfer`/`timeout` 等没有判据的观测种类，都在结果中报告为未使用。
-- 判据与适用条件见 [scenarios.md](scenarios.md)。
+- 模块实例：手册确认存在的实例，即 FlexCAN2 的 `CAN_A`/`CAN_B`/`CAN_C` 与 DSPI 的 `DSPI_A`～`DSPI_D`。清单之外的实例名（如 `CAN_D`、`DSPI_E`）报告为不支持，不假定该实例存在。
+- 观测：只使用 `kind` 为 `register` 且给出了已解码位域（`fields`）的观测。以下三类都不参与判断，但报告方式不同——**已观测而本版没有判据**的位域或寄存器按不支持列出并附观测 id，不得读成未观测；只有原始值（`value`）、寄存器名不带模块实例前缀的观测按不支持报告；`can_frame`/`spi_transfer`/`timeout` 等没有判据的观测种类报告为未使用。
+- 同一字段出现多个不同取值时统一报为「存在多个不同取值，无法合并判断」：本版不比较观测时刻、不做跨观测的时序分析，既不挑一个取值当作当前值，也不声称这些取值来自不同采集时刻。
+- 判据、取值写法与适用条件见 [scenarios.md](scenarios.md)。
 
 ### 退出码
 
@@ -223,7 +224,7 @@ Windows 侧已按上述命令构建并查询通过：索引写入 22 条知识�
 
 Windows 侧已实际执行：两份示例记录（`examples/REC-2026-0918-001.json`、`REC-2026-0918-002.json`）退出码 0 并打印出与 [scenarios.md](scenarios.md) 一致的结论与缺失项；不支持的芯片记录退出码 9；Schema 不合规、文件缺失、JSON 非法、Schema 文件缺失四条路径均退出码 2 并指出具体路径或原因。判据行为由 `tests/test_mcu_flexcan2.py`、`tests/test_mcu_dspi.py`、`tests/test_mcu_tools.py`、`tests/test_diag_cli.py` 固化，其中 `test_mcu_tools.py` 校验每条依据引用的知识条目 id 在 `knowledge/curated/` 中确实存在。
 
-**板端未验证**：`diag` 尚未在 RDC300I 上执行，见"未验证项"。
+**板端已验证通过**（2026-09-23）：两份示例记录在 RDC300I 上的输出与退出码与 Windows 侧一致，详见下文"验证记录（RDC300I）"。
 
 ## 模型服务调用（MindIE）
 
@@ -433,6 +434,18 @@ python -m pip download -d wheelhouse --only-binary=:all: \
 
 板端 SQLite 3.37.2 的 FTS5 行为与 Windows 侧一致，索引无需随源码复制，在板端重建即可。未收集：板端逐条查询的完整输出；依赖无需重装（本轮未新增依赖），未记录板端当时的依赖版本。
 
+**已完成（2026-09-23，诊断工具之后）**：
+
+同步源码后执行第 6 步与完整测试，结果与 Windows 一致（本轮未新增依赖，无需重装，`wheelhouse/` 未变更）：
+
+| 项 | 结果 |
+|---|---|
+| `python -m pytest` | 全部通过（262 项：CLI 4 + 契约 10 + 模型调用 46 + 知识库 140 + 诊断工具 62） |
+| `diag examples/REC-2026-0918-002.json`（第 6 步） | 退出码 0，与 Windows 侧一致：3 条确认状态、2 条缺失信息、4 条不支持项（`CAN_A.ECR` 的 `RXECTR`；`CAN_A.ESR` 的 `TXWRN`/`RXWRN`/`IDLE`/`TXRX`/`BOFFINT`；`CAN_A.CR` 的 `BOFFMSK`；观测种类 `can_frame`/`timeout`） |
+| `diag examples/REC-2026-0918-001.json --json`（第 6 步） | 退出码 0，与 Windows 侧输出一致 |
+
+未收集：板端输出原文。`diag` 不访问模型服务，也不依赖知识索引，因此本步与第 5 步互不影响。
+
 ### 备用方案（未验证）
 
 - **可编辑安装失败**（板端 pip 为 21.3.1，可编辑安装依赖 PEP 660，是 pip 21.3 才引入的能力）：改为先安装构建后端，再关闭构建隔离重试。
@@ -457,10 +470,9 @@ python -m pip download -d wheelhouse --only-binary=:all: \
 - `AIRBORNEDIAG_LLM_API_KEY` 非空时的认证分支，从未执行过；
 - 模型服务的非默认配置：只验证了默认的服务地址、接口路径与模型名；
 - 模型回答的内容质量与诊断适用性；
-- **板端的 `diag` 子命令**：本轮新增，只在 Windows 上执行过，尚未在 RDC300I 上运行（第 6 步）；
 - 判据在真实设备记录上的表现：工具只在构造的模拟记录上验证过，没有真实控制器记录的判据验证。
 
-已验证的范围：Python 包在 Windows 与 RDC300I 上的安装、命令行 `--help`/`--version`/`llm`/`kb` 的输出与退出码、测试执行、契约校验脚本在两端的结果、模型调用在假服务上的成功与失败路径、知识库在两端（Windows 与 RDC300I）的构建与检索效果、**`diag` 在 Windows 上对示例记录与构造记录的判据行为**，以及**对真实 MindIE 服务的一次成功调用**。
+已验证的范围：Python 包在 Windows 与 RDC300I 上的安装、命令行 `--help`/`--version`/`llm`/`kb`/`diag` 的输出与退出码、测试执行、契约校验脚本在两端的结果、模型调用在假服务上的成功与失败路径、知识库在两端（Windows 与 RDC300I）的构建与检索效果、**`diag` 在两端对示例记录的判据行为及在 Windows 上对构造记录的判据行为**，以及**对真实 MindIE 服务的一次成功调用**。
 
 以下内容**不在验证范围内**，不能由上述结果推断为通过：
 
