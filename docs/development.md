@@ -56,7 +56,7 @@ python3.9 -m venv .venv
 | `airbornediag --help` | 退出码 0，输出 usage 与参数说明 |
 | `airbornediag --version` | 退出码 0，输出 `airbornediag 0.1.0` |
 | 仓库外目录执行 | 退出码 0，确认命令来自安装而非当前目录 |
-| `python -m pytest` | 262 passed（`test_cli.py` 4 + `test_contract_examples.py` 10 + `test_llm_prompt.py` 2 + `test_llm_config.py` 15 + `test_llm_client.py` 17 + `test_llm_cli.py` 12 + `test_knowledge_model.py` 37 + `test_knowledge_index.py` 33 + `test_knowledge_cli.py` 15 + `test_knowledge_search.py` 55 + `test_mcu_flexcan2.py` 23 + `test_mcu_dspi.py` 14 + `test_mcu_tools.py` 15 + `test_diag_cli.py` 10） |
+| `python -m pytest` | 303 passed（`test_cli.py` 4 + `test_contract_examples.py` 10 + `test_llm_prompt.py` 2 + `test_llm_config.py` 15 + `test_llm_client.py` 17 + `test_llm_cli.py` 12 + `test_llm_diagnosis.py` 23 + `test_knowledge_model.py` 37 + `test_knowledge_index.py` 33 + `test_knowledge_cli.py` 15 + `test_knowledge_search.py` 55 + `test_mcu_flexcan2.py` 23 + `test_mcu_dspi.py` 14 + `test_mcu_tools.py` 15 + `test_diag_cli.py` 10 + `test_report_cli.py` 18） |
 | `python scripts/validate_contracts.py` | 退出码 0，并打印日期时间格式未执行的说明 |
 | `airbornediag llm --help` | 退出码 0，输出子命令说明 |
 | `airbornediag llm --prompt "你好"`（本机无 MindIE 服务） | 退出码 3，打印端点与连接失败原因；**未返回任何模拟回答** |
@@ -75,9 +75,12 @@ airbornediag --version
 airbornediag llm --help      # 模型服务调用
 airbornediag kb --help       # 知识库构建与查询
 airbornediag diag --help     # MCU 诊断工具
+airbornediag report --help   # 完整诊断流程
 ```
 
-当前提供使用说明、版本查询与 `llm`、`kb`、`diag` 三个子命令，完整诊断流程（知识检索接入、候选根因、报告生成）尚未实现；不带参数时打印帮助并返回退出码 0。
+当前提供使用说明、版本查询与 `llm`、`kb`、`diag`、`report` 四个子命令；不带参数时打印帮助并返回退出码 0。
+
+四个子命令的关系：`llm`、`kb`、`diag` 各自只做一件事，可独立使用；`report` 是完整流程，内部依次用到输入校验、诊断工具、知识检索与模型调用。调试单个环节时用前三个，出报告时用 `report`。
 
 各子命令的输出约定一致：**结果走标准输出，诊断信息（端点、索引路径、耗时等）走标准错误**，便于管道使用。
 
@@ -100,6 +103,13 @@ airbornediag diag --help     # MCU 诊断工具
 
 `tests/test_llm_prompt.py`（2 项）、`tests/test_llm_config.py`（15 项）、`tests/test_llm_client.py`（17 项）、`tests/test_llm_cli.py`（12 项）覆盖模型调用：ChatML 提示词格式、配置优先级与取值校验、请求体是否与历史脚本一致、回答提取、连接/超时/HTTP/响应格式四类失败，以及子命令的输出与退出码。
 
+`tests/test_llm_diagnosis.py`（23 项）覆盖诊断提示词与回答解析：
+
+- 提示词：ChatML 格式与 system 要求、列出全部观测 id、写明记录来源（模拟案例与真实设备记录措辞不同）、带工具状态与出处并注明不得改写、缺失与不支持小节、知识条目含 id 与出处；空小节明说「没有」而不是省略；规模受字符上限约束，裁剪时按「知识条目 → 不支持项 → 缺失信息」的顺序并在提示词内写明省略条数，观测与工具结论本身放不下时直接报错。
+- 解析：合法回答（含被代码围栏包裹的回答）、缺键、非 JSON、JSON 非法、空 `statement`、候选原因缺字段、引用不存在的观测、记录无观测时任何引用都算编造；契约没有的顶层键不进入报告但记入 `ignored_keys`；报错信息附回答开头（超长时截断）。
+
+`tests/test_report_cli.py`（18 项）是完整流程的端到端测试，**除模型服务外全部使用真实实现**（真实 Schema 校验、真实诊断工具、对 `knowledge/curated/` 建真实索引），模型服务用测试进程内的假服务代替。覆盖：CAN 与 DSPI 两份示例记录的程序组装部分与期望报告一致（状态按内容与证据配对，不比较映射后的 id 字面值）、状态 id 唯一且带检测对象前缀、规则 id 后缀集合一致、候选原因由程序编号、被引用的知识条目确实进入提示词、证据不足时允许不提出候选原因、同一外设两个实例的状态 id 可区分、`--out` 写文件时标准输出为空、回答里的多余字段不进报告但提示；失败路径覆盖不支持的芯片与不合规记录（都在调用模型前结束、假服务收到 0 个请求）、索引缺失、连接失败、超时、HTTP 错误、响应格式异常、回答非 JSON、引用不存在的观测、缺 `recommended_checks`，以及运行期报告自检被触发时的退出码。**假服务只返回文本，工程侧对回答的解析与校验都是真的。**
+
 知识库测试分四组：
 
 - `tests/test_knowledge_model.py`（37 项）：工程内真实知识文件可读且 id 唯一、两类外设均有条目、知识条目不引用模拟案例的预期报告编号，以及文件级/条目级格式错误、重复 id、出处未登记、条目芯片超出来源范围等负例。
@@ -115,13 +125,15 @@ airbornediag diag --help     # MCU 诊断工具
 
 ## 契约校验
 
-契约的字段、类型、枚举与分支约束由 `schemas/` 下的 JSON Schema 声明，用 `jsonschema` 实际执行；Schema 表达不了的跨文档关系由 `scripts/validate_contracts.py` 补充。两层都通过才退出码 0。
+契约的字段、类型、枚举与分支约束由 `schemas/` 下的 JSON Schema 声明，用 `jsonschema` 实际执行；Schema 表达不了的跨文档关系由 `src/airbornediag/report.py` 补充，**`scripts/validate_contracts.py` 调用的是同一份实现**，`report` 子命令在输出报告前也用它自检，两处要求不会各自漂移。两层都通过才退出码 0。
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\validate_contracts.py
 ```
 
 脚本接受 `--root 工程根目录`，默认使用脚本所在工程的根目录；跨文件 `$ref` 从本地 Schema 解析，不访问网络。Linux 下将 `.\.venv\Scripts\python.exe` 换成 `.venv/bin/python`。
+
+脚本需要先导入工程包（`from airbornediag.report import ...`），因此**必须先完成上面的安装步骤**；未安装时脚本会在导入处报 `ModuleNotFoundError`，而不是静默跳过校验。
 
 校验通过**不代表诊断结论正确**，只代表格式与引用成立。脚本会在通过时一并说明哪些约束没有执行（当前为日期时间格式），详见 [contracts.md](contracts.md) 的"已知限制"。
 
@@ -226,6 +238,109 @@ Windows 侧已实际执行：两份示例记录（`examples/REC-2026-0918-001.js
 
 **板端已验证通过**（2026-09-23）：两份示例记录在 RDC300I 上的输出与退出码与 Windows 侧一致，详见下文"验证记录（RDC300I）"。
 
+## 完整诊断流程（report）
+
+`report` 用一条命令走完输入校验 → 工具分析 → 知识检索 → 模型分析 → 报告输出。各环节的实现与单独执行时相同，编排顺序由程序固定，**不依赖模型自主选择工具**。
+
+**需要 MindIE 服务可用**：模型调用失败、回答不合规或组装出的报告未通过契约校验时**不产出报告**，也不降级为模拟回答或"正常"结论。
+
+### 使用
+
+```powershell
+# 报告写到标准输出
+.\.venv\Scripts\airbornediag.exe report examples\REC-2026-0918-002.json
+
+# 报告写入文件（此时标准输出为空，便于脚本使用）
+.\.venv\Scripts\airbornediag.exe report examples\REC-2026-0918-002.json --out report.json
+```
+
+报告走标准输出（或 `--out` 指定的文件），进度、检索命中与退出原因走标准错误。
+
+参数：
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `record` | 必填 | 故障记录 JSON 的路径 |
+| `--out` | 空 | 报告写入的文件路径；省略时写到标准输出 |
+| `--schema` | `schemas/fault-record.schema.json` | 输入契约的 Schema 路径 |
+| `--schema-dir` | `schemas` | 契约 Schema 所在目录；报告 Schema 用相对 `$ref` 引用输入 Schema，两者必须同目录 |
+| `--db` | `knowledge/index/knowledge.sqlite3` | 知识库索引路径，**需先 `kb build`** |
+| `--curated-dir` | `knowledge/curated` | 知识文件目录 |
+| `--registry` | `knowledge/source-registry.json` | 来源登记表路径 |
+| `--max-knowledge` | 8 | 送入模型的知识条目目标条数，必须为正整数。**工具结论引用的条目不受此限，始终全部送入** |
+| `--base-url` | 配置值 | 覆盖模型服务地址 |
+| `--max-tokens` | 配置值 | 单次请求最大生成 token 数；**这只限制生成长度，不是输入长度限制** |
+| `--timeout` | 配置值 | 单次请求超时秒数 |
+
+### 输出与职责边界
+
+报告中的内容按「谁有依据谁写」划分：
+
+- **程序保留**：`device`、`test`、`observations` 按输入记录原样回显，`confirmed_states`、`inconsistencies`、`insufficient_data`、`unsupported`、`fault_state`、`root_cause` 由工具结论组装，候选原因的 id（`CC-1`、`CC-2`……）由程序编号。**模型不得改写这些内容**，运行期自检会逐字段比对。
+- **模型提供**：解释、候选原因与检查建议。候选原因的证据引用只能是记录中已有的观测，引用不存在的观测即判为不合规、流程终止。
+- 状态 id 统一写为 `<检测对象>/<规则 id>`（如 `CAN_A/FC-BUSOFF-STATE`）：规则 id 不含模块实例名，同一外设的多个实例会产生同名规则，加检测对象前缀后每条状态都能唯一识别并区分所属实例，规则来源仍可读。
+- 模型回答里契约没有的顶层字段不进入报告，但会在标准错误中列出，便于发现模型答了预期之外的内容。
+
+字段语义见 [contracts.md](contracts.md)。
+
+### 退出码
+
+| 退出码 | 含义 |
+|---|---|
+| 0 | 成功，报告已产出 |
+| 2 | 记录文件缺失、不是合法 JSON、未通过 Schema 校验，或契约 Schema 读不到 |
+| 3 | 连接失败：模型服务未启动或地址不可达 |
+| 4 | 请求超时 |
+| 5 | HTTP 错误：模型服务返回非 2xx |
+| 6 | 响应格式异常：非 JSON、缺少 `text`、`text` 为空数组或类型不符 |
+| 7 | 知识文件或来源登记表有问题 |
+| 8 | 索引缺失、损坏或版本不符（提示先运行 `kb build`） |
+| 9 | 记录合规，但芯片或全部检测对象不在本版支持范围内，**没有调用模型** |
+| 10 | 模型回答不合规，或组装出的报告未通过契约校验 |
+
+退出码 3～6 与 `llm` 子命令一致，7～8 与 `kb` 子命令一致。**除 0 以外都不产出报告。**
+
+### 依赖
+
+**未新增依赖。** 复用已有的 `jsonschema`、`urllib`、`sqlite3` 与全部诊断工具，`wheelhouse/` 无需变更。
+
+### 验证情况
+
+Windows 侧已实际执行：
+
+| 命令 | 结果 |
+|---|---|
+| `report --help` | 退出码 0，退出码说明与参数完整 |
+| `report` 全流程（假模型服务） | 由 `tests/test_report_cli.py` 的 18 项覆盖，含正常流程与全部关键失败路径 |
+| `python -m pytest` | 303 passed（完整清单见上文"验证记录（Windows，已执行）"） |
+
+`diag` 的输出就是报告里程序组装的那部分（`confirmed_states`、`inconsistencies`、`insufficient_data`、`unsupported`、`fault_state`、`root_cause`），`diag` 的验证情况见上文"诊断工具（diag）"。
+
+### 真实服务联调（2026-09-24，已完成）
+
+在 Windows 上对真实 MindIE 服务执行了完整流程，**连接经由端口转发到达板端服务**，不是在板端本机执行的：
+
+| 项 | 结果 |
+|---|---|
+| `llm --prompt "你好"` | 退出码 0，1.94 s 取回回答 |
+| `report examples/REC-2026-0918-002.json` | 退出码 0，提示词 5431 字符，回答 210 字符，5.70 s |
+| `report examples/REC-2026-0918-001.json` | 退出码 10（模型回答不合规），**未产出报告** |
+
+**程序组装部分与工具结论逐条一致**——用 `diag --json` 的输出比对真实报告：顶层回显三项、`confirmed_states`（3 条的规则 id + 语句 + 证据）、`insufficient_data`（2 条）、`unsupported`（4 条）、`inconsistencies`（0 条）全部相同，候选原因中**没有编造的证据引用**。
+
+**模型给出的那部分存在质量问题**，详见下文"模型内容质量（已知问题）"：候选原因始终为空、检查建议中出现材料里不存在的位域名、约每 8 次有 1 次回答结构不合规（此时流程如实报错、退出码 10、不产出报告，处理正确）。
+
+### 模型内容质量（已知问题）
+
+下列问题是 2026-09-24 真实联调中观察到的，**流程与契约本身没有缺陷**，属于模型能力与提示词约束力的问题。**本版未做处理，仅记录**。
+
+1. **候选原因始终为空，`root_cause` 一律落到 `not_determined`。** 对 `REC-2026-0918-002` 连续多次真实调用，`candidate_causes` 无一例外是空数组。该记录同时有「总线关闭已确认」「`BOFFREC=1`」「已排除仅无应答这一错误源」三条依据，模型仍未提出任何候选原因，报告最终只有状态罗列与通用建议，**诊断价值有限**。契约允许证据不足时不提候选原因，因此这不算流程错误，但效果达不到预期。
+2. **检查建议中出现材料里不存在的位域名。** 一次回答写了「检查 CAN_A 的 CRC 和 **FRLERR** 错误标志」，而 `FRLERR` 在 `knowledge/curated/` 中不存在（FlexCAN 的错误标志为 `CRCERR`、`FRMERR`、`STFERR`，计数器为 `TXECTR`、`RXECTR`）；另有若干次把 `CRCERR`、`STFERR` 这类**标志位说成"计数器"**。提示词第 1 条明令"不得引入材料以外的寄存器定义、位域含义"，模型未守住。**`candidate_causes.statement` 与 `recommended_checks` 是自由文本，契约只校验非空字符串，这类错误不会被校验拦下。**
+3. **建议与已有结论重复。** 例如建议"确认 CAN_A 是否处于总线关闭状态"，而工具已确认该状态。
+4. **回答结构不合规。** 约每 8 次有 1 次把 `recommended_checks` 写成对象数组（`[{"check_item": "..."}]`）而不是字符串数组。流程的处理是正确的：如实报错、退出码 10、不产出报告、附上回答开头。
+
+检索侧未发现问题：送入的 6 条知识条目全部与总线关闭场景相关，工具结论引用的 5 条都被完整送入。
+
 ## 模型服务调用（MindIE）
 
 应用通过 HTTP 调用 RDC300I 上已部署的 MindIE 服务，使用标准库 `urllib`，**不引入第三方依赖**，因此 `wheelhouse/` 无需变更。
@@ -283,6 +398,41 @@ Windows 侧已实际执行：两份示例记录（`examples/REC-2026-0918-001.js
 | 4 | 请求超时 |
 | 5 | HTTP 错误：服务返回非 2xx |
 | 6 | 响应格式异常：非 JSON、缺少 `text`、`text` 为空数组或类型不符 |
+
+### 输入长度限制（2026-09-24 已核对）
+
+`max_tokens` **只限制单次生成的 token 数，不是输入长度限制**，提示词过长时没有任何一端会因此拦住。应用侧的应对是 `src/airbornediag/llm/diagnosis.py` 中的 `PROMPT_CHAR_LIMIT`（字符数）：超限时依次裁剪知识条目、不支持项与缺失信息，并在提示词内写明省略了哪些内容；观测与工具结论本身放不下时不截断观测，直接报错——截断会让模型引用不存在的证据。
+
+**服务端当前的限制**（板端 `mindie-service` 配置）：
+
+| 项 | 值 |
+|---|---|
+| 输入上限 | 10240 tokens |
+| 生成长度上限 | 2560 tokens |
+| 总长 | 12800 |
+| `truncation` | `false` |
+
+**`truncation=false` 是必要的**：它为 `true` 时服务端会静默截断超长提示词，而模型仍可能引用被截掉的那些观测 id，正好违背"候选原因只能引用记录中已有的观测"。关掉之后超限是明确报错，应用如实上报退出码 5、不产出报告。
+
+服务端限制起初为输入 2048 tokens，当时实测的拒绝行为是：
+
+```
+HTTP 424  {"error":"Failed to enqueue inferRequest: This model's maximum input ids
+length cannot be greater than 2048,the input ids length is 3095"}
+```
+
+**`PROMPT_CHAR_LIMIT` 的取值依据**：应用侧没有分词器，只能按字符数近似，于是实测了几种代表性内容的 token 密度——
+
+| 内容 | 字符数 | token 数 | 密度 |
+|---|---|---|---|
+| 真实诊断提示词 | 5431 | 3095 | 0.57 /字符 |
+| 纯中文散文 | 7500 | 4800 | 0.64 /字符 |
+| 报告式编号混排 | 8600 | 5400 | 0.63 /字符 |
+| 纯数字标点 | 9600 | 8399 | 0.875 /字符 |
+
+按最密的中文散文 0.64 折算，当前的 `PROMPT_CHAR_LIMIT = 8000` 约 5100 tokens，占输入上限的 50%；即使按不现实的纯数字标点 0.875 折算也只有 7000 tokens，仍在 10240 以内。**真实案例的实际用量**：`report examples/REC-2026-0918-002.json` 的提示词 5431 字符，未触发裁剪。
+
+这是按实测密度定的经验值，不是服务端限制的等价换算：内容比实测更密时仍可能超限，此时服务端会拒绝并如实报错（退出码 5），不会产出一份看起来正常的报告。
 
 ### 验证情况
 
@@ -385,6 +535,17 @@ python -m pip download -d wheelhouse --only-binary=:all: \
 
    退出码含义见"模型服务调用（MindIE）"。退出码 0 且打印出模型回答，说明真实调用通过；退出码 3 表示服务未启动或地址不可达。
 
+8. 验证完整诊断流程（需要第 5 步的索引和第 7 步可用的模型服务）：
+
+   ```bash
+   .venv/bin/airbornediag report examples/REC-2026-0918-002.json; echo "exit=$?"
+   .venv/bin/airbornediag report examples/REC-2026-0918-001.json --out /tmp/report-001.json; echo "exit=$?"
+   ```
+
+   应退出码 0 并打印出诊断报告。报告的对象、确认状态、缺失信息与不支持项应与第 6 步 `diag` 的输出一致（`diag` 的输出就是报告里程序组装的那部分）；候选原因与检查建议由模型给出。退出码含义见"完整诊断流程（report）"，**除 0 以外都不产出报告**。
+
+   服务端的输入长度限制已在 2026-09-24 核对（见"输入长度限制"）。本步是**在板端本机**执行——此前的真实联调在 Windows 侧发起并经端口转发到达板端服务，板端本机的运行尚未执行。
+
 以上步骤均在板端 venv 内进行，不修改系统 Python、MindIE 容器或 CANN 环境。
 
 ### 验证记录（RDC300I）
@@ -466,17 +627,19 @@ python -m pip download -d wheelhouse --only-binary=:all: \
 - 板端 locale 非 UTF-8 时的中文输出处理；
 - 板端已安装依赖的具体版本（未收集）；
 - Schema 中的 `format: date-time`（见 [contracts.md](contracts.md) 的"已知限制"）；
-- **Windows 直连板端模型服务**：已验证的真实调用在板端本机执行，Windows 到板端 1025 端口的连通性仍未验证（`docs/architecture.md` 早有此遗留项）；
+- **不经端口转发、从 Windows 直接访问板端 1025 端口**：2026-09-24 的联调中，Windows 上的应用调用的是板端真实 MindIE 服务，但连接**经由端口转发**（本机 `127.0.0.1:1025` 转发到板端），板端 1025 端口对 Windows 的直接可达性仍未验证；
+- **在板端本机执行 `report`**：真实联调在 Windows 侧发起（见"真实服务联调"），板端本机的完整流程尚未执行，命令见 RDC300I 部署一节的第 8 步；
 - `AIRBORNEDIAG_LLM_API_KEY` 非空时的认证分支，从未执行过；
 - 模型服务的非默认配置：只验证了默认的服务地址、接口路径与模型名；
-- 模型回答的内容质量与诊断适用性；
+- 提示词**接近** `PROMPT_CHAR_LIMIT` 时的行为：真实案例的提示词是 5431 字符，未触发裁剪，服务端在接近上限时的表现未经验证（服务端当前限制见"输入长度限制"）；
+- **候选原因在工程意义上是否正确**：本轮只能检查引用是否真实存在、文本里是否出现材料外的名称；候选原因的物理成因是否成立需要专业人员评审，目前没有评审依据（已观察到的质量问题见"模型内容质量（已知问题）"）；
 - 判据在真实设备记录上的表现：工具只在构造的模拟记录上验证过，没有真实控制器记录的判据验证。
 
-已验证的范围：Python 包在 Windows 与 RDC300I 上的安装、命令行 `--help`/`--version`/`llm`/`kb`/`diag` 的输出与退出码、测试执行、契约校验脚本在两端的结果、模型调用在假服务上的成功与失败路径、知识库在两端（Windows 与 RDC300I）的构建与检索效果、**`diag` 在两端对示例记录的判据行为及在 Windows 上对构造记录的判据行为**，以及**对真实 MindIE 服务的一次成功调用**。
+已验证的范围：Python 包在 Windows 与 RDC300I 上的安装、命令行 `--help`/`--version`/`llm`/`kb`/`diag`/`report` 的输出与退出码、测试执行、契约校验脚本在两端的结果、模型调用在假服务上的成功与失败路径、知识库在两端（Windows 与 RDC300I）的构建与检索效果、**`diag` 在两端对示例记录的判据行为及在 Windows 上对构造记录的判据行为**、**`report` 在假模型服务上的完整流程与全部关键失败路径**、**MindIE 服务端的输入长度限制与超限行为**，以及**应用在 Windows 上经端口转发对板端真实 MindIE 服务跑通完整流程、并逐条核对报告遵守了工具结论**。
 
 以下内容**不在验证范围内**，不能由上述结果推断为通过：
 
 - 真实模型调用的回答质量。**接口调用成功不等于诊断结论正确**，生成报告成功也不等于诊断正确；
-- 完整诊断流程与最终诊断结论的正确性：目前只验证了各工具对构造记录的判断，工具结果之上的知识检索、候选根因与报告生成尚未实现；
+- 完整流程中**模型给出的那部分**是否可用：真实联调已确认程序组装的部分与工具结论逐条一致、候选原因没有编造证据引用，但观察到的候选原因为空、编造位域名等问题说明**这部分目前还达不到可用水平**；此外因为模型始终没有提出候选原因，本轮**没有可核查的观测引用**，"引用是否相关"这条验收项未能覆盖；
 - 知识库的覆盖完整性：本轮只整理了首批场景（FC-01、FC-02、DS-01、DS-02）所需的内容，未覆盖手册的其他章节，也未覆盖 TMS320F28335；
 - 板端系统 Python、MindIE 容器与 CANN 环境的行为（本工程未修改这些环境）。

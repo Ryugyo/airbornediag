@@ -1,5 +1,5 @@
 {
-  "schema_version": "0.1.0",
+  "schema_version": "0.1.1",
   "report_id": "RPT-2026-0918-002",
   "record_ref": "REC-2026-0918-002",
   "provenance": {
@@ -114,27 +114,33 @@
     "root_cause": "candidates_only",
     "confirmed_states": [
       {
-        "id": "CS-1",
-        "statement": "采集时刻 CAN_A 处于总线关闭（bus off）状态。本结论只描述该时刻的故障封闭状态，不说明总线关闭发生的时刻，也不说明进入总线关闭前累计的错误类型分布。",
-        "evidence": ["OBS-3"],
-        "basis": {
-          "source": "MPC5554_RM",
-          "locator": "22.3.3.6, Figure 22-8, Table 22-11"
-        }
-      },
-      {
-        "id": "CS-2",
-        "statement": "在 CAN_A.CR 的 BOFFREC 位为 1 期间，模块不会自动从总线关闭恢复，将保持该状态直至该位被清除。本结论只描述该配置位的作用，不说明总线关闭的成因，也不判断该配置是设计意图还是配置错误。",
-        "evidence": ["OBS-4"],
+        "id": "CAN_A/FC-BUSOFF-BOFFREC-DISABLED",
+        "statement": "在 CAN_A.CR 的 BOFFREC 位为 1 期间，模块不会自动从总线关闭恢复，将保持该状态直至该位被清除。本结论只描述该配置位的作用：不说明总线关闭是否已经发生，也不判断该配置是设计意图还是配置错误。",
+        "evidence": [
+          "OBS-4"
+        ],
         "basis": {
           "source": "MPC5554_RM",
           "locator": "22.3.3.2, Table 22-8"
         }
       },
       {
-        "id": "CS-3",
-        "statement": "进入总线关闭前的错误累积不可能仅来自无其他节点应答（ACK 错误）。本结论只排除错误源仅为无应答的情形，不排除总线上只有一个节点：单节点总线若同时存在位错误或填充错误等其他错误源，仍可能进入总线关闭；本结论也不判断异常位于 CAN_A 本节点还是总线上的其他节点。",
-        "evidence": ["OBS-3"],
+        "id": "CAN_A/FC-BUSOFF-STATE",
+        "statement": "采集时刻 CAN_A 处于总线关闭（bus off）状态。本结论只描述该时刻的故障封闭状态：不说明总线关闭发生的时刻，不说明进入总线关闭前的错误类型分布，也不判断异常位于本节点还是总线上的其他节点。",
+        "evidence": [
+          "OBS-3"
+        ],
+        "basis": {
+          "source": "MPC5554_RM",
+          "locator": "22.3.3.6, Figure 22-8, Table 22-11"
+        }
+      },
+      {
+        "id": "CAN_A/FC-BUSOFF-NO-ACK-ONLY",
+        "statement": "进入总线关闭前的错误累积不可能仅来自无其他节点应答（ACK 错误）。本结论只排除「错误源仅为无应答」这一条路径：不排除总线上只有一个节点，单节点总线若同时存在位错误、填充错误等其他错误源，发送错误计数器仍可持续累积并进入总线关闭。",
+        "evidence": [
+          "OBS-3"
+        ],
         "basis": {
           "source": "MPC5554_RM",
           "locator": "22.3.3.5"
@@ -145,33 +151,31 @@
       {
         "id": "CC-1",
         "statement": "CAN 总线物理层异常，例如差分线短路或开路、终端电阻缺失或阻值失配",
-        "supporting": ["OBS-2", "OBS-3"],
+        "supporting": [
+          "OBS-2",
+          "OBS-3"
+        ],
         "contradicting": []
       },
       {
         "id": "CC-2",
         "statement": "CAN_A 与总线上其他节点的位定时配置不一致，例如波特率或采样点不匹配",
-        "supporting": ["OBS-2", "OBS-3"],
+        "supporting": [
+          "OBS-2",
+          "OBS-3"
+        ],
         "contradicting": []
       }
     ],
     "inconsistencies": [],
     "insufficient_data": [
       {
-        "missing": "总线电气测量，包括差分电平、终端电阻与总线波形",
-        "reason": "手册 22.3.3.5 与 22.3.3.6 只能确认总线关闭状态与错误累积路径，无法定位物理层成因，因此 CC-1 与 CC-2 之间无法区分，异常位于 CAN_A 本节点还是总线其他位置也无法判定"
+        "missing": "与 FLTCONF 处于同一时刻的 TXECTR 观测",
+        "reason": "手册 22.3.3.5 规定进入总线关闭时 TXECTR 被复位为零并与另一个内部计数器级联，改为计数总线上「11 个连续隐性位」的出现次数，此时它已不是发送错误计数。要把 OBS-1 的取值用于任何判断，都需先确认该次采集时模块仍处于总线关闭；该观测与 FLTCONF 观测（OBS-3）来自不同的寄存器读取，契约中 capture_id 只表示同一次读取动作、不表示不同寄存器之间同步，因此这个前提未被观测，该 TXECTR 取值的语义是否已经改变无法判定。"
       },
       {
-        "missing": "上一次读取 CAN_A.ESR 的时刻，即 OBS-2 的 covers_since",
-        "reason": "手册 22.3.3.6 说明 BIT1ERR 至 STFERR 为读清除位且只反映上次读取以来的情况；缺少上次读取时刻就无法确定 OBS-2 覆盖的时间范围，OBS-2 中的 ACKERR 与 STFERR 是否来自总线关闭前的错误累积无法判定"
-      },
-      {
-        "missing": "OBS-1 与 OBS-3 之间 FLTCONF 是否发生变化",
-        "reason": "OBS-1 与 OBS-3 来自不同采集动作，采集时刻相差 3 ms。手册 22.3.3.5 规定总线关闭状态下 TXECTR 表示对 11 个连续隐性位出现次数的级联计数，而非发送错误计数；要把 OBS-1 的数值用于任何判断，都需先确认两次采集之间 FLTCONF 保持为总线关闭，此前提未被观测，因此 TXECTR=96 的语义是否适用于该数值无法判定"
-      },
-      {
-        "missing": "CAN_A.CR 的位定时配置与总线约定波特率",
-        "reason": "缺少该配置则无法与总线约定比对，CC-2 是否成立无法判定"
+        "missing": "观测 OBS-2（CAN_A.ESR）覆盖区间的起点 covers_since",
+        "reason": "手册 22.3.3.6 说明 BIT1ERR、BIT0ERR、ACKERR、CRCERR、FRMERR、STFERR 为读清除位且本次读取会将其清除；缺少覆盖区间的起点，就无法确定这些取值对应的时间范围，也无法判断它们是否与观测到的其他状态属于同一时期。"
       }
     ],
     "recommended_checks": [
@@ -183,6 +187,24 @@
       "补充采集时同时记录 ECR 与 ESR 的读取时刻，以确认 TXECTR 语义的适用区间",
       "补充采集时记录 ESR 的读取时刻，使错误标志的覆盖区间可知",
       "清除 BOFFINT 前先完整留存 ESR 快照，避免读清除位被后续读取覆盖"
+    ],
+    "unsupported": [
+      {
+        "subject": "CAN_A.ECR 的位域 RXECTR",
+        "reason": "记录中已观测到 CAN_A.ECR 的 RXECTR（观测 OBS-1），但本版没有这些位域的判据，因此它们不参与判断。不支持表示本版没有依据，不等于这些取值未观测，也不等于取值正常。"
+      },
+      {
+        "subject": "CAN_A.ESR 的位域 TXWRN、RXWRN、IDLE、TXRX、BOFFINT",
+        "reason": "记录中已观测到 CAN_A.ESR 的 TXWRN、RXWRN、IDLE、TXRX、BOFFINT（观测 OBS-3），但本版没有这些位域的判据，因此它们不参与判断。不支持表示本版没有依据，不等于这些取值未观测，也不等于取值正常。"
+      },
+      {
+        "subject": "CAN_A.CR 的位域 BOFFMSK",
+        "reason": "记录中已观测到 CAN_A.CR 的 BOFFMSK（观测 OBS-4），但本版没有这些位域的判据，因此它们不参与判断。不支持表示本版没有依据，不等于这些取值未观测，也不等于取值正常。"
+      },
+      {
+        "subject": "观测种类：can_frame、timeout",
+        "reason": "本版没有使用这些观测的判据，因此它们不参与判断。这不表示这些观测所描述的情况不存在或正常。"
+      }
     ]
   }
 }

@@ -1,8 +1,12 @@
 """AirborneDiag 命令行入口。
 
 当前提供使用说明、版本查询、用于验证模型服务的 `llm` 子命令、用于构建和查询 MCU
-知识库的 `kb` 子命令，以及用于运行 MCU 诊断工具的 `diag` 子命令。诊断工具产出的是
-中间结果，完整的诊断报告与模型分析尚未实现。
+知识库的 `kb` 子命令、用于运行 MCU 诊断工具的 `diag` 子命令，以及完成整条流程的
+`report` 子命令。
+
+`diag` 与 `report` 的区别：`diag` 只运行确定性的诊断工具并打印中间结果，不访问
+模型服务与知识检索；`report` 走完整流程（输入校验 → 工具分析 → 知识检索 → 模型
+分析 → 报告契约校验），产出一份结构化诊断报告。
 """
 
 from __future__ import annotations
@@ -31,6 +35,8 @@ from airbornediag.knowledge import (
     segment,
 )
 from airbornediag.llm import (
+    AnalysisOutputError,
+    DiagnosisPromptError,
     LLMConnectionError,
     LLMError,
     LLMHTTPError,
@@ -40,6 +46,13 @@ from airbornediag.llm import (
     build_chat_prompt,
 )
 from airbornediag.mcu import Basis, DiagnosisResult, run_tools, to_jsonable
+from airbornediag.pipeline import (
+    DEFAULT_MAX_KNOWLEDGE,
+    PipelineInputError,
+    UnsupportedRecordError,
+    run_pipeline,
+)
+from airbornediag.report import ReportContractError
 
 PROG = "airbornediag"
 
@@ -54,9 +67,13 @@ EXIT_KB_DATA = 7
 EXIT_KB_INDEX = 8
 # 记录本身合规，但芯片或全部检测对象都不在本版支持范围内，没有任何工具运行。
 EXIT_UNSUPPORTED = 9
+# 模型回答不合规，或组装出的报告未通过契约校验。两者都不产出报告。
+EXIT_ANALYSIS = 10
 
 # 输入契约的 Schema。校验规则以 Schema 为准，此处不重复维护字段约束。
 DEFAULT_RECORD_SCHEMA = Path("schemas/fault-record.schema.json")
+# 契约 Schema 所在目录。报告 Schema 用相对 $ref 引用输入 Schema，两者必须同目录。
+DEFAULT_SCHEMA_DIR = Path("schemas")
 # 一条记录最多列出多少条 Schema 校验错误，避免输出过长。
 SCHEMA_ERROR_LIMIT = 10
 
@@ -82,8 +99,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog=PROG,
         description="面向民机机载系统的智能故障诊断工具。",
         epilog=(
-            "当前提供模型服务调用验证、知识库构建与查询，以及 MCU 诊断工具；"
-            "完整的诊断报告与模型分析尚未实现。"
+            "当前提供模型服务调用验证、知识库构建与查询、MCU 诊断工具，以及把上述环节"
+            "串起来的完整诊断流程（report 子命令）。"
         ),
     )
     parser.add_argument(
@@ -123,6 +140,88 @@ def build_parser() -> argparse.ArgumentParser:
         "--schema",
         default=str(DEFAULT_RECORD_SCHEMA),
         help="输入契约的 Schema 路径，默认为 {}。".format(DEFAULT_RECORD_SCHEMA),
+    )
+
+    report = subparsers.add_parser(
+        "report",
+        help="对一条故障记录执行完整诊断流程并输出诊断报告。",
+        description=(
+            "对一条故障记录执行完整流程：输入契约校验、MCU 诊断工具、知识检索、模型分析，"
+            "最后组装诊断报告并做契约校验。报告走标准输出（或用 --out 写入文件），"
+            "进度、检索命中与退出原因走标准错误。\n\n"
+            "需要 MindIE 服务可用：模型调用失败、回答不合规或报告未通过契约校验时不产出"
+            "报告，也不降级为模拟回答或“正常”结论。"
+        ),
+        epilog=(
+            "失败时按类型返回不同的退出码：{} 记录缺失、不合 JSON、未通过 Schema 校验或"
+            "契约 Schema 读不到，{} 连接失败，{} 超时，{} HTTP 错误，{} 响应格式异常，"
+            "{} 知识文件或来源登记表有问题，{} 索引缺失、损坏或版本不符，{} 芯片或全部"
+            "检测对象不在本版支持范围内，{} 模型回答不合规或报告未通过契约校验。".format(
+                EXIT_CONFIG,
+                EXIT_CONNECTION,
+                EXIT_TIMEOUT,
+                EXIT_HTTP,
+                EXIT_RESPONSE,
+                EXIT_KB_DATA,
+                EXIT_KB_INDEX,
+                EXIT_UNSUPPORTED,
+                EXIT_ANALYSIS,
+            )
+        ),
+    )
+    report.add_argument(
+        "record",
+        help="故障记录 JSON 文件的路径，例如 examples/REC-2026-0918-002.json。",
+    )
+    report.add_argument(
+        "--out",
+        help="报告写入的文件路径。省略时报告写到标准输出。",
+    )
+    report.add_argument(
+        "--schema",
+        default=str(DEFAULT_RECORD_SCHEMA),
+        help="输入契约的 Schema 路径，默认为 {}。".format(DEFAULT_RECORD_SCHEMA),
+    )
+    report.add_argument(
+        "--schema-dir",
+        default=str(DEFAULT_SCHEMA_DIR),
+        help="契约 Schema 所在目录，默认为 {}。".format(DEFAULT_SCHEMA_DIR),
+    )
+    report.add_argument(
+        "--db",
+        default=str(DEFAULT_INDEX_PATH),
+        help="知识库索引文件路径，默认为 {}。".format(DEFAULT_INDEX_PATH),
+    )
+    report.add_argument(
+        "--curated-dir",
+        default=str(DEFAULT_CURATED_DIR),
+        help="知识文件目录，默认为 {}。".format(DEFAULT_CURATED_DIR),
+    )
+    report.add_argument(
+        "--registry",
+        default=str(DEFAULT_REGISTRY_PATH),
+        help="来源登记表路径，默认为 {}。".format(DEFAULT_REGISTRY_PATH),
+    )
+    report.add_argument(
+        "--max-knowledge",
+        type=_positive_int,
+        default=DEFAULT_MAX_KNOWLEDGE,
+        help="送入模型的知识条目目标条数，默认为 {}。工具结论引用的条目不受此限，"
+        "始终全部送入。".format(DEFAULT_MAX_KNOWLEDGE),
+    )
+    report.add_argument(
+        "--base-url",
+        help="覆盖模型服务地址，例如 http://127.0.0.1:1025。",
+    )
+    report.add_argument(
+        "--max-tokens",
+        type=int,
+        help="单次请求最大生成 token 数，默认为配置值。这只限制生成长度，不是输入长度限制。",
+    )
+    report.add_argument(
+        "--timeout",
+        type=float,
+        help="单次请求超时秒数，默认为配置值。",
     )
 
     llm = subparsers.add_parser(
@@ -523,6 +622,123 @@ def _run_diag(args: argparse.Namespace) -> int:
     return EXIT_OK if result.supported else EXIT_UNSUPPORTED
 
 
+def _stderr_progress(message: str) -> None:
+    print(message, file=sys.stderr)
+
+
+def _run_report(args: argparse.Namespace) -> int:
+    """执行 report 子命令，返回进程退出码。
+
+    报告走标准输出（或用 ``--out`` 写文件），进度与退出原因走标准错误：这样无论
+    调用成功与否，标准输出上都只有报告本身。
+    """
+    try:
+        record = _load_record(Path(args.record), Path(args.schema))
+    except DiagInputError as error:
+        print("输入错误：{}".format(error), file=sys.stderr)
+        return EXIT_CONFIG
+
+    try:
+        config = load_llm_config(
+            base_url=args.base_url,
+            max_tokens=args.max_tokens,
+            timeout=args.timeout,
+        )
+    except ConfigError as error:
+        print("配置错误：{}".format(error), file=sys.stderr)
+        return EXIT_CONFIG
+
+    print("记录：{}".format(args.record), file=sys.stderr)
+    print("端点：{}".format(config.endpoint), file=sys.stderr)
+    print("模型：{}".format(config.model), file=sys.stderr)
+    print("索引：{}".format(args.db), file=sys.stderr)
+
+    client = MindIEClient(config)
+    try:
+        outcome = run_pipeline(
+            record,
+            client=client,
+            schema_dir=Path(args.schema_dir),
+            db_path=Path(args.db),
+            curated_dir=Path(args.curated_dir),
+            registry_path=Path(args.registry) if args.registry else None,
+            max_knowledge=args.max_knowledge,
+            progress=_stderr_progress,
+        )
+    except UnsupportedRecordError as error:
+        print(_format_diagnosis(error.result), file=sys.stderr)
+        print("芯片或全部检测对象不在本版支持范围内，未运行任何工具，未调用模型。", file=sys.stderr)
+        return EXIT_UNSUPPORTED
+    except (PipelineInputError, DiagInputError) as error:
+        print("输入错误：{}".format(error), file=sys.stderr)
+        return EXIT_CONFIG
+    except KnowledgeError as error:
+        print("知识库错误：{}".format(error), file=sys.stderr)
+        return _knowledge_exit_code(error)
+    except DiagnosisPromptError as error:
+        print("提示词错误：{}".format(error), file=sys.stderr)
+        return EXIT_ANALYSIS
+    except LLMTimeoutError as error:
+        print("请求超时：{}".format(error), file=sys.stderr)
+        return EXIT_TIMEOUT
+    except LLMConnectionError as error:
+        print("连接失败：{}".format(error), file=sys.stderr)
+        print("请确认 MindIE 服务已启动，且该地址从本机可达。", file=sys.stderr)
+        return EXIT_CONNECTION
+    except LLMHTTPError as error:
+        print("HTTP 错误：{}".format(error), file=sys.stderr)
+        return EXIT_HTTP
+    except LLMResponseError as error:
+        print("响应格式异常：{}".format(error), file=sys.stderr)
+        return EXIT_RESPONSE
+    except AnalysisOutputError as error:
+        print("模型回答不合规：{}".format(error), file=sys.stderr)
+        if error.preview:
+            print("回答开头：{}".format(error.preview), file=sys.stderr)
+        print("未产出报告：模型回答不能被当作分析结果使用。", file=sys.stderr)
+        return EXIT_ANALYSIS
+    except ReportContractError as error:
+        print("报告未通过契约校验：", file=sys.stderr)
+        for problem in error.problems:
+            print("  - {}".format(problem), file=sys.stderr)
+        print("未输出报告：报告不合规时不产出交付物。", file=sys.stderr)
+        return EXIT_ANALYSIS
+    except LLMError as error:  # 兜底，避免把异常栈直接抛给使用者
+        print("调用失败：{}".format(error), file=sys.stderr)
+        return EXIT_RESPONSE
+
+    if outcome.ignored_keys:
+        print(
+            "注意：模型回答中的 {} 在本报告契约里没有对应字段，已忽略。".format(
+                "、".join(outcome.ignored_keys)
+            ),
+            file=sys.stderr,
+        )
+    print(
+        "报告：报告标识 {}，fault_state {}".format(
+            outcome.report.get("report_id"), outcome.report["analysis"]["fault_state"]
+        ),
+        file=sys.stderr,
+    )
+    print(
+        "说明：工具确认的状态与观测回显由程序组装，模型只提供候选原因与检查建议；"
+        "候选原因是待验证的推测，不是确认结论。",
+        file=sys.stderr,
+    )
+
+    text = json.dumps(outcome.report, ensure_ascii=False, indent=2)
+    if args.out:
+        try:
+            Path(args.out).write_text(text + "\n", encoding="utf-8")
+        except OSError as error:
+            print("写入报告失败：{}".format(error), file=sys.stderr)
+            return EXIT_CONFIG
+        print("已写入报告：{}".format(args.out), file=sys.stderr)
+    else:
+        print(text)
+    return EXIT_OK
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """命令行入口函数，返回进程退出码。"""
     parser = build_parser()
@@ -533,6 +749,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if args.command == "diag":
         return _run_diag(args)
+
+    if args.command == "report":
+        return _run_report(args)
 
     if args.command == "kb":
         if args.kb_command == "build":

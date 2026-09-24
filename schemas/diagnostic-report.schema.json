@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "AirborneDiag 诊断报告（输出契约）",
-  "description": "格式版本 0.1.0。顶层为完整报告：device、test、observations 由主程序按输入记录的字段值保留，模型不得改写；analysis 为分析结论。字段语义与兼容性规则见 docs/contracts.md。",
+  "description": "格式版本 0.1.1。顶层为完整报告：device、test、observations 由主程序按输入记录的字段值保留，模型不得改写；analysis 为分析结论。字段语义与兼容性规则见 docs/contracts.md。",
   "type": "object",
   "required": [
     "schema_version",
@@ -15,7 +15,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": "0.1.0"
+      "const": "0.1.1"
     },
     "report_id": {
       "type": "string",
@@ -98,6 +98,11 @@
           "type": "array",
           "items": { "type": "string", "minLength": 1 },
           "description": "后续检查建议，含无案例证据支持的通用排查项。"
+        },
+        "unsupported": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/unsupported_item" },
+          "description": "本版工具没有判据、未参与判断的内容。与 insufficient_data 的区别是：缺少信息表示未知，本数组表示本版根本不判定。"
         }
       },
       "additionalProperties": false
@@ -201,6 +206,23 @@
           "type": "string",
           "minLength": 1,
           "description": "该信息为何影响判断，以及缺少它导致哪些内容无法判定。"
+        }
+      },
+      "additionalProperties": false
+    },
+    "unsupported_item": {
+      "type": "object",
+      "required": ["subject", "reason"],
+      "properties": {
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "description": "本版没有判据的对象或内容，取自工具结果。"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "为何本版不判定该项。不判定不等于该项正常。"
         }
       },
       "additionalProperties": false

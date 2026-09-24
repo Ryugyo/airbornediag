@@ -1,5 +1,5 @@
 {
-  "schema_version": "0.1.0",
+  "schema_version": "0.1.1",
   "report_id": "RPT-2026-0918-001",
   "record_ref": "REC-2026-0918-001",
   "provenance": {
@@ -24,16 +24,8 @@
     "inconsistencies": [],
     "insufficient_data": [
       {
-        "missing": "DSPI_C 的寄存器观测，例如 DSPI_C.SR 的 TCF / TXRXS / RFOF / RFDF / TXCTR / RXCTR，以及 DSPI_C.MCR 的 MDIS / MSTR",
-        "reason": "记录只有自检结论，没有可核对的外设状态证据，无法判断失败发生在传输未启动、传输未完成还是接收缓冲异常，因此 DSPI_C 是否曾进入 RUNNING 状态、失败是否与接收缓冲有关、异常是否位于 DSPI 模块内部均无法判定"
-      },
-      {
-        "missing": "自检的发送值与实际接收值（MISO）",
-        "reason": "输入仅给出 test.result=fail，未给出失败模式；缺少发送值与实际接收值，无法区分传输完成但数据不符与传输未完成，失败的具体模式因此无法判定"
-      },
-      {
-        "missing": "该次自检的测试定义（期望接收值、限时、判定条件）",
-        "reason": "记录只给出通过或失败结论，缺少判定条件则无法复核该结论本身是否成立，test.result=fail 的判定依据是否与本次分析口径一致无法判定"
+        "missing": "DSPI_C 的寄存器观测（DSPIx_SR 的状态与标志位、DSPIx_MCR 的 MSTR）",
+        "reason": "检测 PBIT-DSPI-C-0007 报失败，但记录中没有 DSPI_C 的任何寄存器观测。第 20 章不含错误处理或故障封闭章节：DSPIx_SR 的状态位能确认若干具体条件（FIFO 溢出/下溢、TX/RX 运行状态、传输完成），但该章没有把这些条件归入故障分类的规则；仅凭检测结论无法把这次失败归入某个故障状态，也无法在「传输未启动」「传输完成但数据不符」「接收缓冲异常」之间区分，因此本次不给出 DSPI_C 的故障状态与根因结论。缺少观测表示未知，不等于该外设正常。"
       }
     ],
     "recommended_checks": [
@@ -41,6 +33,7 @@
       "记录自检发送的 MOSI 值与实际接收的 MISO 值，以及该次传输是否在限时内完成",
       "提供该次自检的测试定义，包括期望接收值、限时与判定条件，以便复核 test.result",
       "若 DSPI_C 工作于从模式，一并记录 TFUF 位与外部主机的传输时刻"
-    ]
+    ],
+    "unsupported": []
   }
 }

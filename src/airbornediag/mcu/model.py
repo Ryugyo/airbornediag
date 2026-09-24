@@ -38,12 +38,21 @@ class Basis:
 
 @dataclass(frozen=True)
 class ConfirmedState:
-    """规则确认的状态。只有前提已被观测且成立时才产生。"""
+    """规则确认的状态。只有前提已被观测且成立时才产生。
+
+    ``is_fault`` 标注该结论是否为**手册判据确认的故障状态**，由规则显式声明，默认
+    为 False。报告契约中的 ``fault_state`` 依据这个标注判定，而不是「有没有确认
+    状态」：配置位的作用、工作模式与读清除标志的快照同样是规则确认的状态，但它们
+    本身不构成故障。例如 FlexCAN 的故障封闭状态（bus off、error passive）由手册
+    判据确认，标为 True；``FLTCONF`` 为 error active 是故障封闭机制中的正常状态，
+    标为 False。DSPI 的第 20 章不提供故障状态判据，因此该外设没有任何 True 的结论。
+    """
 
     id: str
     statement: str
     evidence: Tuple[str, ...]
     basis: Basis
+    is_fault: bool = False
 
 
 @dataclass(frozen=True)
@@ -122,6 +131,19 @@ class DiagnosisResult:
         结果当作「未发现异常」。
         """
         return bool(self.tool_results)
+
+    @property
+    def fault_confirmed(self) -> bool:
+        """是否存在由手册判据确认的故障状态。
+
+        与 ``bool(confirmed_states)`` 不是一回事：只有规则显式声明为故障状态的结论
+        才算，配置位效果、工作模式与读清除标志快照即使被确认也不计入。
+        """
+        return any(
+            state.is_fault
+            for item in self.tool_results
+            for state in item.confirmed_states
+        )
 
     def counts(self) -> dict:
         """各分类的条数，供命令行打印汇总。"""
