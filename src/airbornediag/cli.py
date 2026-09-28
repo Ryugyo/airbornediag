@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
+from datetime import datetime
 from pathlib import Path
-from typing import Any, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from jsonschema import Draft202012Validator
 
@@ -57,7 +59,7 @@ from airbornediag.report import ReportContractError
 PROG = "airbornediag"
 
 EXIT_OK = 0
-# 2 与 argparse 的用法错误退出码一致，表示参数或配置有问题。
+# 2 与 argparse 的用法错误退出码一致，表示参数或配置有问题，或报告无法保存。
 EXIT_CONFIG = 2
 EXIT_CONNECTION = 3
 EXIT_TIMEOUT = 4
@@ -74,6 +76,10 @@ EXIT_ANALYSIS = 10
 DEFAULT_RECORD_SCHEMA = Path("schemas/fault-record.schema.json")
 # 契约 Schema 所在目录。报告 Schema 用相对 $ref 引用输入 Schema，两者必须同目录。
 DEFAULT_SCHEMA_DIR = Path("schemas")
+# 报告输出目录，相对当前工作目录。属生成物，不纳入版本管理。
+DEFAULT_RESULTS_DIR = Path("results")
+# 同一秒内重名时最多向后试多少个序号，避免异常情况下无限重试。
+RESULT_NAME_LIMIT = 100
 # 一条记录最多列出多少条 Schema 校验错误，避免输出过长。
 SCHEMA_ERROR_LIMIT = 10
 
@@ -147,16 +153,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="对一条故障记录执行完整诊断流程并输出诊断报告。",
         description=(
             "对一条故障记录执行完整流程：输入契约校验、MCU 诊断工具、知识检索、模型分析，"
-            "最后组装诊断报告并做契约校验。报告走标准输出（或用 --out 写入文件），"
-            "进度、检索命中与退出原因走标准错误。\n\n"
+            "最后组装诊断报告并做契约校验。报告默认保存到当前工作目录下的 results/，"
+            "文件名含报告标识与运行时间，同名时追加序号而不覆盖已有报告；也可用 --out "
+            "写到显式路径（已存在则覆盖）。终端显示可读的中文简述，进度、检索命中与"
+            "退出原因走标准错误。\n\n"
             "需要 MindIE 服务可用：模型调用失败、回答不合规或报告未通过契约校验时不产出"
             "报告，也不降级为模拟回答或“正常”结论。"
         ),
         epilog=(
-            "失败时按类型返回不同的退出码：{} 记录缺失、不合 JSON、未通过 Schema 校验或"
-            "契约 Schema 读不到，{} 连接失败，{} 超时，{} HTTP 错误，{} 响应格式异常，"
-            "{} 知识文件或来源登记表有问题，{} 索引缺失、损坏或版本不符，{} 芯片或全部"
-            "检测对象不在本版支持范围内，{} 模型回答不合规或报告未通过契约校验。".format(
+            "失败时按类型返回不同的退出码：{} 记录缺失、不合 JSON、未通过 Schema 校验、"
+            "契约 Schema 读不到或报告无法保存，{} 连接失败，{} 超时，{} HTTP 错误，"
+            "{} 响应格式异常，{} 知识文件或来源登记表有问题，{} 索引缺失、损坏或版本"
+            "不符，{} 芯片或全部检测对象不在本版支持范围内，{} 模型回答不合规或报告"
+            "未通过契约校验。".format(
                 EXIT_CONFIG,
                 EXIT_CONNECTION,
                 EXIT_TIMEOUT,
@@ -175,7 +184,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     report.add_argument(
         "--out",
-        help="报告写入的文件路径。省略时报告写到标准输出。",
+        help=(
+            "报告写入的文件路径。省略时写到当前工作目录下的 {}/，文件名含报告标识"
+            "与运行时间，同名时追加序号而不覆盖；指定时按该路径写入，已存在则覆盖，"
+            "且不自动创建父目录。".format(DEFAULT_RESULTS_DIR)
+        ),
     )
     report.add_argument(
         "--schema",
@@ -593,6 +606,114 @@ def _format_diagnosis(result: DiagnosisResult) -> str:
     return "\n".join(lines)
 
 
+def _format_subject(report: Mapping[str, Any]) -> str:
+    """分析对象：芯片、检测对象与本次检测。"""
+    device = report.get("device", {})
+    test = report.get("test", {})
+    parts = [str(device.get("model") or "（缺省）")]
+    target = test.get("target")
+    if target:
+        parts.append(str(target))
+    name = test.get("name")
+    test_id = test.get("id") or "（缺省）"
+    if name:
+        parts.append("{}（{}）".format(test_id, name))
+    else:
+        parts.append(str(test_id))
+    return " / ".join(parts) + "，检测结果 {}".format(test.get("result") or "（缺省）")
+
+
+def _format_report_summary(report: Mapping[str, Any]) -> str:
+    """把最终报告排成可读简述。
+
+    内容全部取自报告本身，不新增判断：程序组装的部分与模型给出的部分分节标注来源。
+    空项按空写，不把「没有候选原因」写成「没有故障」，也不把「未判定」写成「正常」。
+    """
+    analysis = report["analysis"]
+
+    lines = [
+        "诊断报告：{}".format(report.get("report_id") or "（缺省）"),
+        "分析对象：{}".format(_format_subject(report)),
+    ]
+
+    if analysis["fault_state"] == "confirmed":
+        lines.append("故障状态（程序按手册判据判定）：已确认")
+    else:
+        lines.append("故障状态（程序按手册判据判定）：未判定（不等于设备正常）")
+
+    if analysis["root_cause"] == "candidates_only":
+        lines.append("根因判定（程序给出）：有候选原因、未确认根因")
+    else:
+        lines.append("根因判定（程序给出）：未确定")
+
+    confirmed = analysis["confirmed_states"]
+    if confirmed:
+        lines.append("")
+        lines.append("确认状态（程序按手册判据给出，{} 项）：".format(len(confirmed)))
+        for state in confirmed:
+            lines.append("  - {}".format(state["id"]))
+            lines.append("      {}".format(state["statement"]))
+    else:
+        lines.append("")
+        lines.append("确认状态（程序按手册判据给出）：无")
+
+    conflicts = analysis["inconsistencies"]
+    if conflicts:
+        lines.append("输入矛盾（程序给出，{} 项）：".format(len(conflicts)))
+        for conflict in conflicts:
+            lines.append("  - {}".format(conflict["id"]))
+            lines.append("      {}".format(conflict["statement"]))
+    else:
+        lines.append("输入矛盾（程序给出）：无")
+
+    missing = analysis["insufficient_data"]
+    if missing:
+        lines.append(
+            "缺失信息（程序给出，缺失表示未知、不等于正常，{} 项）：".format(len(missing))
+        )
+        for item in missing:
+            lines.append("  - 缺少 {}".format(item["missing"]))
+            lines.append("      {}".format(item["reason"]))
+    else:
+        lines.append("缺失信息（程序给出，缺失表示未知、不等于正常）：无")
+
+    causes = analysis["candidate_causes"]
+    if causes:
+        lines.append("候选原因（模型给出的待验证推测，未经确认，{} 项）：".format(len(causes)))
+        for cause in causes:
+            text = "  - {}：{}".format(cause["id"], cause["statement"])
+            supporting = cause.get("supporting") or []
+            if supporting:
+                text += "（支持观测：{}）".format("、".join(supporting))
+            lines.append(text)
+    else:
+        lines.append(
+            "候选原因（模型给出的待验证推测，未经确认）："
+            "本次未提出候选原因，根因尚未确定；不表示设备没有故障"
+        )
+
+    checks = analysis["recommended_checks"]
+    if checks:
+        lines.append("检查建议（模型给出，含无案例证据的通用排查项，{} 项）：".format(len(checks)))
+        for check in checks:
+            lines.append("  - {}".format(check))
+    else:
+        lines.append("检查建议（模型给出，含无案例证据的通用排查项）：无")
+
+    unsupported = analysis.get("unsupported") or []
+    if unsupported:
+        lines.append(
+            "不支持（程序给出，本版没有判据、不等于正常，{} 项）：".format(len(unsupported))
+        )
+        for item in unsupported:
+            lines.append("  - {}".format(item["subject"]))
+        lines.append("  （完整理由见报告文件）")
+    else:
+        lines.append("不支持（程序给出，本版没有判据、不等于正常）：无")
+
+    return "\n".join(lines)
+
+
 def _run_diag(args: argparse.Namespace) -> int:
     """执行 diag 子命令，返回进程退出码。"""
     try:
@@ -626,11 +747,69 @@ def _stderr_progress(message: str) -> None:
     print(message, file=sys.stderr)
 
 
+# 文件名里不保留的字符：路径分隔符、Windows 保留字符与控制字符等。
+_UNSAFE_NAME_CHARS = re.compile(r"[^0-9A-Za-z._-]+")
+
+
+def _run_stamp() -> str:
+    """本次运行的本地时间，用作报告文件名的一部分。"""
+    return datetime.now().strftime("%Y%m%dT%H%M%S")
+
+
+def _results_path(report_id: str) -> Path:
+    """默认输出路径：results/<报告标识>_<运行时间>.json。
+
+    只对文件名做安全处理，报告里的 ``report_id`` 原样保留。
+    """
+    safe_id = _UNSAFE_NAME_CHARS.sub("_", report_id).strip("._-") or "report"
+    return DEFAULT_RESULTS_DIR / "{}_{}.json".format(safe_id, _run_stamp())
+
+
+def _save_report(text: str, report_id: str, out: Optional[str]) -> Optional[Path]:
+    """保存报告，返回实际写入的路径；失败打印原因并返回 ``None``。
+
+    未指定 ``--out`` 时写入 ``results/``：目录不存在则创建，同名文件已存在时
+    追加序号，绝不覆盖已有报告。指定 ``--out`` 时沿用显式路径的既有策略：不建
+    父目录，已存在则直接覆盖。
+    """
+    if out:
+        path = Path(out)
+        try:
+            path.write_text(text, encoding="utf-8")
+        except OSError as error:
+            print("保存报告失败：{}".format(error), file=sys.stderr)
+            return None
+        return path
+
+    path = _results_path(report_id)
+    for attempt in range(RESULT_NAME_LIMIT):
+        candidate = path if attempt == 0 else path.with_name(
+            "{}-{}{}".format(path.stem, attempt + 1, path.suffix)
+        )
+        try:
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            with candidate.open("x", encoding="utf-8") as handle:
+                handle.write(text)
+        except FileExistsError:
+            continue
+        except OSError as error:
+            print("保存报告失败：{}".format(error), file=sys.stderr)
+            return None
+        return candidate
+
+    print(
+        "保存报告失败：{} 附近已有 {} 个同名报告，未写入。".format(path, RESULT_NAME_LIMIT),
+        file=sys.stderr,
+    )
+    return None
+
+
 def _run_report(args: argparse.Namespace) -> int:
     """执行 report 子命令，返回进程退出码。
 
-    报告走标准输出（或用 ``--out`` 写文件），进度与退出原因走标准错误：这样无论
-    调用成功与否，标准输出上都只有报告本身。
+    报告默认保存到当前工作目录下的 ``results/``（文件名含报告标识与运行时间），
+    或用 ``--out`` 写到显式路径；标准输出是可读的中文简述，进度与退出原因走标准
+    错误。保存失败时按错误处理，不显示简述，也不出现任何成功提示。
     """
     try:
         record = _load_record(Path(args.record), Path(args.schema))
@@ -714,28 +893,18 @@ def _run_report(args: argparse.Namespace) -> int:
             ),
             file=sys.stderr,
         )
-    print(
-        "报告：报告标识 {}，fault_state {}".format(
-            outcome.report.get("report_id"), outcome.report["analysis"]["fault_state"]
-        ),
-        file=sys.stderr,
-    )
-    print(
-        "说明：工具确认的状态与观测回显由程序组装，模型只提供候选原因与检查建议；"
-        "候选原因是待验证的推测，不是确认结论。",
-        file=sys.stderr,
-    )
 
+    # 先保存、后报成功：保存失败时不显示任何像成功的信息。
     text = json.dumps(outcome.report, ensure_ascii=False, indent=2)
-    if args.out:
-        try:
-            Path(args.out).write_text(text + "\n", encoding="utf-8")
-        except OSError as error:
-            print("写入报告失败：{}".format(error), file=sys.stderr)
-            return EXIT_CONFIG
-        print("已写入报告：{}".format(args.out), file=sys.stderr)
-    else:
-        print(text)
+    path = _save_report(text + "\n", outcome.report.get("report_id") or "report", args.out)
+    if path is None:
+        return EXIT_CONFIG
+
+    print(_format_report_summary(outcome.report))
+    print(
+        "报告已保存：{}".format(path.resolve() if not args.out else path),
+        file=sys.stderr,
+    )
     return EXIT_OK
 
 

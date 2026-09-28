@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pytest
 
@@ -31,6 +31,19 @@ REGISTRY = REPO_ROOT / "knowledge" / "source-registry.json"
 ENV_PREFIX = "AIRBORNEDIAG_LLM_"
 RECORD_002 = "examples/REC-2026-0918-002.json"
 RECORD_001 = "examples/REC-2026-0918-001.json"
+
+# 命令行的默认路径都是相对当前目录的。需要离开工程根目录运行的用例，用这组参数
+# 把默认值固定到工程内的实际位置。
+REPO_PATHS = [
+    "--schema",
+    str(REPO_ROOT / "schemas" / "fault-record.schema.json"),
+    "--schema-dir",
+    str(REPO_ROOT / "schemas"),
+    "--curated-dir",
+    str(CURATED_DIR),
+    "--registry",
+    str(REGISTRY),
+]
 
 # REC-002 中工具结论引用的知识条目之一，用于确认检索确实按引用取到了条目。
 REFERENCED_ENTRY = "MPC5554-FlexCAN2-ESR-FLTCONF"
@@ -55,6 +68,20 @@ def repo_cwd(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def run_report(args: Sequence[str], base_url: str, db: Path) -> int:
     return cli.main(["report", *args, "--base-url", base_url, "--db", str(db)])
+
+
+def run_report_to_file(
+    args: Sequence[str], base_url: str, db: Path, tmp_path: Path
+) -> Tuple[int, Optional[Dict[str, Any]]]:
+    """跑一次 report，报告写到临时目录后读回来。
+
+    默认模式会把报告留在当前目录的 results/ 下，因此需要报告内容的用例统一用
+    --out 写到临时目录，既拿到文件也不在工程里留下生成物。
+    """
+    out = tmp_path / "report.json"
+    code = run_report([*args, "--out", str(out)], base_url, db)
+    report = json.loads(out.read_text(encoding="utf-8")) if out.is_file() else None
+    return code, report
 
 
 def answer(
@@ -105,7 +132,7 @@ def state_pairs(analysis: Dict[str, Any]) -> List[Any]:
 
 
 def test_can_record_matches_the_expected_report(
-    index: Path, capsys: pytest.CaptureFixture
+    index: Path, tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     """REC-002 走完整流程，程序组装部分与期望报告一致。
 
@@ -118,11 +145,11 @@ def test_can_record_matches_the_expected_report(
         cause("位定时配置不一致", ["OBS-3"]),
     ]
     with fake_mindie(payload={"text": [answer(model_causes, ["测量差分电平"])]}) as service:
-        code = run_report([RECORD_002], service.base_url, index)
+        code, report = run_report_to_file([RECORD_002], service.base_url, index, tmp_path)
 
     captured = capsys.readouterr()
     assert code == cli.EXIT_OK, captured.err
-    report = json.loads(captured.out)
+    assert report is not None
     analysis = report["analysis"]
 
     # 回显三项由程序保留，与输入记录一致。
@@ -154,12 +181,18 @@ def test_can_record_matches_the_expected_report(
 
     # 进度与检索情况走标准错误，不混进报告。
     assert "知识检索：" in captured.err
-    assert "报告：报告标识 RPT-2026-0918-002，fault_state confirmed" in captured.err
+    assert "报告已保存：" in captured.err
+
+    # 标准输出是可读简述，程序给出的结论与模型给出的建议分节标注来源。
+    assert "诊断报告：RPT-2026-0918-002" in captured.out
+    assert "故障状态（程序按手册判据判定）：已确认" in captured.out
+    assert "候选原因（模型给出的待验证推测，未经确认，2 项）：" in captured.out
+    assert "CAN 总线物理层异常" in captured.out
 
 
 @pytest.mark.parametrize("record_path", RECORD_PATHS, ids=[path.name for path in RECORD_PATHS])
 def test_example_matches_its_expected_report(
-    record_path: Path, index: Path, capsys: pytest.CaptureFixture
+    record_path: Path, index: Path, tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     """每个输入记录走完整流程，程序组装的部分与期望报告逐项一致。
 
@@ -172,11 +205,11 @@ def test_example_matches_its_expected_report(
     expected = expected_reports()[record["record_id"]]["analysis"]
 
     with fake_mindie(payload={"text": [answer()]}) as service:
-        code = run_report([str(record_path)], service.base_url, index)
+        code, report = run_report_to_file([str(record_path)], service.base_url, index, tmp_path)
 
     captured = capsys.readouterr()
     assert code == cli.EXIT_OK, captured.err
-    report = json.loads(captured.out)
+    assert report is not None
 
     # 回显三项由程序按输入记录的字段值保留，与期望报告、输入记录都一致。
     assert report["report_id"] == "RPT-" + record["record_id"][len("REC-") :]
@@ -200,11 +233,11 @@ def test_example_matches_its_expected_report(
 
 
 def test_tool_referenced_knowledge_reaches_the_model(
-    index: Path, capsys: pytest.CaptureFixture
+    index: Path, tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     """检索优先取工具结论引用的条目：它们必须出现在送出的提示词里。"""
     with fake_mindie(payload={"text": [answer()]}) as service:
-        code = run_report([RECORD_002], service.base_url, index)
+        code, _ = run_report_to_file([RECORD_002], service.base_url, index, tmp_path)
 
     assert code == cli.EXIT_OK
     prompt = service.last_request()["json"]["prompt"]
@@ -217,15 +250,16 @@ def test_tool_referenced_knowledge_reaches_the_model(
 
 
 def test_dspi_record_reports_no_fault_state(
-    index: Path, capsys: pytest.CaptureFixture
+    index: Path, tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     """DSPI 第 20 章不提供故障状态判据：没有观测时不给出任何故障状态。"""
     expected = fixture("RPT-2026-0918-001.json")["analysis"]
     with fake_mindie(payload={"text": [answer([], ["补充采集 DSPI_C.SR"])]}) as service:
-        code = run_report([RECORD_001], service.base_url, index)
+        code, report = run_report_to_file([RECORD_001], service.base_url, index, tmp_path)
 
     assert code == cli.EXIT_OK
-    analysis = json.loads(capsys.readouterr().out)["analysis"]
+    assert report is not None
+    analysis = report["analysis"]
     assert analysis["fault_state"] == "not_determined"
     assert analysis["confirmed_states"] == []
     assert analysis["candidate_causes"] == []
@@ -233,14 +267,15 @@ def test_dspi_record_reports_no_fault_state(
 
 
 def test_records_without_evidence_may_have_no_candidate_causes(
-    index: Path, capsys: pytest.CaptureFixture
+    index: Path, tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     """证据不足时允许不提出候选原因，root_cause 记为未判定。"""
     with fake_mindie(payload={"text": [answer()]}) as service:
-        code = run_report([RECORD_001], service.base_url, index)
+        code, report = run_report_to_file([RECORD_001], service.base_url, index, tmp_path)
 
     assert code == cli.EXIT_OK
-    assert json.loads(capsys.readouterr().out)["analysis"]["root_cause"] == "not_determined"
+    assert report is not None
+    assert report["analysis"]["root_cause"] == "not_determined"
 
 
 def test_two_instances_of_the_same_peripheral_get_distinct_state_ids(
@@ -255,10 +290,11 @@ def test_two_instances_of_the_same_peripheral_get_distinct_state_ids(
     path = write_record(tmp_path / "multi.json", data)
 
     with fake_mindie(payload={"text": [answer()]}) as service:
-        code = run_report([str(path)], service.base_url, index)
+        code, report = run_report_to_file([str(path)], service.base_url, index, tmp_path)
 
     assert code == cli.EXIT_OK
-    analysis = json.loads(capsys.readouterr().out)["analysis"]
+    assert report is not None
+    analysis = report["analysis"]
     ids = [state["id"] for state in analysis["confirmed_states"]]
     assert sorted(ids) == [
         "CAN_A/FC-BUSOFF-NO-ACK-ONLY",
@@ -269,23 +305,127 @@ def test_two_instances_of_the_same_peripheral_get_distinct_state_ids(
     assert len(set(ids)) == 4
 
 
-def test_report_can_be_written_to_a_file(
-    index: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+def test_out_writes_only_the_given_path(
+    index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
+    """指定 --out 时只写该路径：不另建 results/，终端同样显示简述与实际路径。"""
+    monkeypatch.chdir(tmp_path)
     out = tmp_path / "report.json"
+    record = str(EXAMPLES / "REC-2026-0918-002.json")
+
     with fake_mindie(payload={"text": [answer()]}) as service:
-        code = run_report([RECORD_002, "--out", str(out)], service.base_url, index)
+        code = run_report([record, *REPO_PATHS, "--out", str(out)], service.base_url, index)
 
     captured = capsys.readouterr()
-    assert code == cli.EXIT_OK
-    # 写了文件时标准输出为空，便于脚本使用。
-    assert captured.out == ""
+    assert code == cli.EXIT_OK, captured.err
+    assert not (tmp_path / "results").exists()
+    assert "诊断报告：RPT-2026-0918-002" in captured.out
+    assert "报告已保存：{}".format(out) in captured.err
     report = json.loads(out.read_text(encoding="utf-8"))
     assert report["report_id"] == "RPT-2026-0918-002"
 
+    # 显式路径沿用既有策略：已存在时覆盖，不追加序号。
+    with fake_mindie(payload={"text": [answer([], ["补充采集"])]}) as service:
+        code = run_report([record, *REPO_PATHS, "--out", str(out)], service.base_url, index)
+
+    assert code == cli.EXIT_OK
+    assert [path.name for path in tmp_path.iterdir() if path.is_dir()] == []
+    assert json.loads(out.read_text(encoding="utf-8"))["analysis"]["recommended_checks"] == [
+        "补充采集"
+    ]
+
+
+# --- 默认保存到 results/ ----------------------------------------------------
+
+
+def test_default_run_saves_the_report_under_results(
+    index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """未指定 --out 时报告落到当前目录的 results/，终端只显示简述，不再打一遍 JSON。"""
+    monkeypatch.chdir(tmp_path)
+    record = str(EXAMPLES / "REC-2026-0918-002.json")
+
+    with fake_mindie(payload={"text": [answer()]}) as service:
+        code = run_report([record, *REPO_PATHS], service.base_url, index)
+
+    captured = capsys.readouterr()
+    assert code == cli.EXIT_OK, captured.err
+
+    saved = list((tmp_path / "results").glob("RPT-2026-0918-002_*.json"))
+    assert len(saved) == 1
+    report = json.loads(saved[0].read_text(encoding="utf-8"))
+    assert report["report_id"] == "RPT-2026-0918-002"
+
+    assert "诊断报告：RPT-2026-0918-002" in captured.out
+    assert "schema_version" not in captured.out
+    assert not captured.out.lstrip().startswith("{")
+    assert "报告已保存：{}".format(saved[0].resolve()) in captured.err
+
+
+def test_repeated_runs_keep_both_reports(
+    index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """同一秒内重复运行也不覆盖：第二份带序号，第一份仍在。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_run_stamp", lambda: "20260928T161234")
+    record = str(EXAMPLES / "REC-2026-0918-002.json")
+
+    for _ in range(2):
+        with fake_mindie(payload={"text": [answer()]}) as service:
+            code = run_report([record, *REPO_PATHS], service.base_url, index)
+        assert code == cli.EXIT_OK
+
+    assert sorted(path.name for path in (tmp_path / "results").iterdir()) == [
+        "RPT-2026-0918-002_20260928T161234-2.json",
+        "RPT-2026-0918-002_20260928T161234.json",
+    ]
+
+
+def test_results_path_keeps_the_report_inside_the_results_directory() -> None:
+    """报告标识里的分隔符等字符只影响文件名，不会把报告写到 results/ 之外。"""
+    path = cli._results_path("RPT/2026:bad*id")
+
+    assert path.parent == cli.DEFAULT_RESULTS_DIR
+    assert path.name.startswith("RPT_2026_bad_id_")
+    assert path.suffix == ".json"
+
+
+def test_save_failure_in_the_default_mode_is_reported(
+    index: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """results/ 建不出来时明确报错：不显示简述，也不出现任何成功提示。"""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "results").write_text("占位", encoding="utf-8")
+    record = str(EXAMPLES / "REC-2026-0918-002.json")
+
+    with fake_mindie(payload={"text": [answer()]}) as service:
+        code = run_report([record, *REPO_PATHS], service.base_url, index)
+
+    captured = capsys.readouterr()
+    assert code == cli.EXIT_CONFIG
+    assert captured.out == ""
+    assert "保存报告失败" in captured.err
+    assert "报告已保存" not in captured.err
+
+
+def test_save_failure_with_out_is_reported(
+    index: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """--out 指向不存在的目录时同样明确报错，不显示本次报告生成成功。"""
+    missing = tmp_path / "not-a-directory" / "report.json"
+
+    with fake_mindie(payload={"text": [answer()]}) as service:
+        code = run_report([RECORD_002, "--out", str(missing)], service.base_url, index)
+
+    captured = capsys.readouterr()
+    assert code == cli.EXIT_CONFIG
+    assert captured.out == ""
+    assert "保存报告失败" in captured.err
+    assert "报告已保存" not in captured.err
+
 
 def test_extra_fields_in_the_answer_do_not_reach_the_report(
-    index: Path, capsys: pytest.CaptureFixture
+    index: Path, tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     """契约没有对应字段的内容不进入报告，但要提示使用者。"""
     text = json.dumps(
@@ -297,34 +437,68 @@ def test_extra_fields_in_the_answer_do_not_reach_the_report(
         ensure_ascii=False,
     )
     with fake_mindie(payload={"text": [text]}) as service:
-        code = run_report([RECORD_002], service.base_url, index)
+        code, report = run_report_to_file([RECORD_002], service.base_url, index, tmp_path)
 
     captured = capsys.readouterr()
     assert code == cli.EXIT_OK
     assert "confidence" in captured.err
+    assert report is not None
+    assert "confidence" not in json.dumps(report, ensure_ascii=False)
     assert "confidence" not in captured.out
+
+
+# --- 简述的措辞 -------------------------------------------------------------
+
+
+def test_summary_separates_tool_conclusions_from_model_suggestions(
+    index: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """没有候选原因不等于没有故障：简述要写明来源，不把空项读成设备正常。"""
+    with fake_mindie(payload={"text": [answer()]}) as service:
+        code, report = run_report_to_file([RECORD_002], service.base_url, index, tmp_path)
+
+    shown = capsys.readouterr().out
+    assert code == cli.EXIT_OK
+    assert report is not None
+    assert report["analysis"]["fault_state"] == "confirmed"
+    assert report["analysis"]["candidate_causes"] == []
+
+    assert "故障状态（程序按手册判据判定）：已确认" in shown
+    assert "根因判定（程序给出）：未确定" in shown
+    assert (
+        "候选原因（模型给出的待验证推测，未经确认）："
+        "本次未提出候选原因，根因尚未确定；不表示设备没有故障" in shown
+    )
 
 
 # --- 部分不支持与全部不支持 -------------------------------------------------
 
 
 def test_partially_unsupported_record_is_still_analysed(
-    index: Path, capsys: pytest.CaptureFixture
+    index: Path, tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     """有对象不支持、但也有对象能分析时照常分析，不支持项记进报告。"""
     with fake_mindie(payload={"text": [answer()]}) as service:
-        code = run_report([str(EXAMPLES / "REC-2026-0928-008.json")], service.base_url, index)
+        code, report = run_report_to_file(
+            [str(EXAMPLES / "REC-2026-0928-008.json")], service.base_url, index, tmp_path
+        )
 
     captured = capsys.readouterr()
     assert code == cli.EXIT_OK, captured.err
     assert service.requests != []
+    assert report is not None
 
-    unsupported = json.loads(captured.out)["analysis"]["unsupported"]
+    unsupported = report["analysis"]["unsupported"]
     assert [item["subject"] for item in unsupported] == [
         "CAN_A.ESR.FLTCONF 的取值",
         "检测对象 CAN_D",
         "寄存器原始值（OBS-2）",
     ]
+
+    # 简述里不支持项与未判定都带上「不等于正常」的口径。
+    assert "不支持（程序给出，本版没有判据、不等于正常，3 项）：" in captured.out
+    assert "检测对象 CAN_D" in captured.out
+    assert "故障状态（程序按手册判据判定）：未判定（不等于设备正常）" in captured.out
 
 
 def test_record_with_only_unsupported_targets_exits_unsupported(
