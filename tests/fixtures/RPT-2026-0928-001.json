@@ -1,0 +1,50 @@
+{
+  "schema_version": "0.1.1",
+  "report_id": "RPT-2026-0928-001",
+  "record_ref": "REC-2026-0928-001",
+  "provenance": {
+    "input_origin": "simulated",
+    "report_status": "expected"
+  },
+  "device": {
+    "model": "MPC5554"
+  },
+  "test": {
+    "id": "PBIT-CAN-B-0031",
+    "target": "CAN_B",
+    "name": "CAN_B 总线通信自检",
+    "result": "fail"
+  },
+  "observations": [
+    {
+      "id": "OBS-1",
+      "kind": "register",
+      "target": "CAN_B",
+      "at": "2026-09-28T09:14:02.210+08:00",
+      "capture_id": "CAP-B-ESR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_B.ESR",
+      "fields": {
+        "FLTCONF": "error_passive"
+      }
+    }
+  ],
+  "analysis": {
+    "fault_state": "not_determined",
+    "root_cause": "not_determined",
+    "confirmed_states": [],
+    "candidate_causes": [],
+    "inconsistencies": [],
+    "insufficient_data": [
+      {
+        "missing": "CAN_B.CR 的 LOM 取值",
+        "reason": "手册 22.3.3.6 说明 LOM 置位时 FLTCONF 会被强制显示为「错误被动」，因此仅凭 FLTCONF 为 01 无法区分真实的错误被动与只听模式。缺少 LOM 的取值，模块的故障封闭状态不可判定，也无法判断该模块当前是否允许发送报文。"
+      }
+    ],
+    "recommended_checks": [
+      "补充采集 CAN_B.CR 的 LOM 位：LOM 置位时 FLTCONF 同样显示为错误被动，该取值未知时 CAN_B 的故障封闭状态不可判定",
+      "确认 CAN_B 的 LOM 配置是否符合设计意图：LOM 置位时模块以错误被动方式工作、冻结全部错误计数器、不发送应答且无法发送任何报文"
+    ],
+    "unsupported": []
+  }
+}

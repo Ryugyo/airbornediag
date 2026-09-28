@@ -1,0 +1,105 @@
+{
+  "schema_version": "0.1.1",
+  "report_id": "RPT-2026-0928-005",
+  "record_ref": "REC-2026-0928-005",
+  "provenance": {
+    "input_origin": "simulated",
+    "report_status": "expected"
+  },
+  "device": {
+    "model": "MPC5554"
+  },
+  "test": {
+    "id": "PBIT-DSPI-C-0011",
+    "target": "DSPI_C",
+    "name": "DSPI_C 回环自检",
+    "result": "fail"
+  },
+  "observations": [
+    {
+      "id": "OBS-1",
+      "kind": "register",
+      "target": "DSPI_C",
+      "at": "2026-09-28T13:47:55.410+08:00",
+      "capture_id": "CAP-C-MCR-1",
+      "semantics": "instantaneous",
+      "register": "DSPI_C.MCR",
+      "fields": {
+        "MSTR": 0
+      }
+    },
+    {
+      "id": "OBS-2",
+      "kind": "register",
+      "target": "DSPI_C",
+      "at": "2026-09-28T13:47:55.413+08:00",
+      "capture_id": "CAP-C-SR-1",
+      "semantics": "since_last_read",
+      "covers_since": "2026-09-28T13:00:00+08:00",
+      "register": "DSPI_C.SR",
+      "fields": {
+        "TFUF": 1,
+        "RFOF": 1
+      }
+    },
+    {
+      "id": "OBS-3",
+      "kind": "register",
+      "target": "DSPI_C",
+      "at": "2026-09-28T13:47:55.413+08:00",
+      "capture_id": "CAP-C-SR-1",
+      "semantics": "instantaneous",
+      "register": "DSPI_C.SR",
+      "fields": {
+        "TXRXS": 1
+      }
+    }
+  ],
+  "analysis": {
+    "fault_state": "not_determined",
+    "root_cause": "not_determined",
+    "confirmed_states": [
+      {
+        "id": "DSPI_C/DS-TFUF-UNDERFLOW",
+        "statement": "DSPI_C 工作在 SPI 从模式，其 TX FIFO 发生了下溢（TFUF 置位）：从模式下 TX FIFO 为空、而外部 SPI 主控发起了一次传输。本结论只说明下溢发生，不说明发生的时刻与次数，也不说明外部主控为何在 TX FIFO 为空时发起传输。",
+        "evidence": [
+          "OBS-2"
+        ],
+        "basis": {
+          "source": "MPC5554_RM",
+          "locator": "20.3.2.4, Table 20-6"
+        }
+      },
+      {
+        "id": "DSPI_C/DS-RFOF-OVERFLOW",
+        "statement": "DSPI_C 的 RX FIFO 发生了溢出：RX FIFO 与移位寄存器都已满时，又发起了一次传输。本结论只说明溢出发生，不说明受影响数据的内容与数量。",
+        "evidence": [
+          "OBS-2"
+        ],
+        "basis": {
+          "source": "MPC5554_RM",
+          "locator": "20.3.2.4, Table 20-6"
+        }
+      },
+      {
+        "id": "DSPI_C/DS-TX-RX-RUN-STATE",
+        "statement": "DSPI_C 的 TX/RX 操作已启用，采集时刻处于 RUNNING 状态。本结论只说明运行状态，不说明传输的数据是否正确，也不说明检测结论的成因。",
+        "evidence": [
+          "OBS-3"
+        ],
+        "basis": {
+          "source": "MPC5554_RM",
+          "locator": "20.3.2.4, Table 20-6; 20.4.2, Table 20-17"
+        }
+      }
+    ],
+    "candidate_causes": [],
+    "inconsistencies": [],
+    "insufficient_data": [],
+    "recommended_checks": [
+      "记录 DSPI_C.SR 的 TFUF、RFOF 被清除的时刻：这两位是写 1 清除位，一次读取只反映上次清除以来是否发生过，本次结论不含发生时刻与次数",
+      "若 DSPI_C 工作在从模式，记录外部 SPI 主控发起传输的时刻，与该次 TFUF 的清除时刻对照"
+    ],
+    "unsupported": []
+  }
+}

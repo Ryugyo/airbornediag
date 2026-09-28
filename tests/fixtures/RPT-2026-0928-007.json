@@ -1,0 +1,148 @@
+{
+  "schema_version": "0.1.1",
+  "report_id": "RPT-2026-0928-007",
+  "record_ref": "REC-2026-0928-007",
+  "provenance": {
+    "input_origin": "simulated",
+    "report_status": "expected"
+  },
+  "device": {
+    "model": "MPC5554"
+  },
+  "test": {
+    "id": "PBIT-CAN-A-0044",
+    "target": "CAN_A",
+    "name": "CAN_A 与 CAN_B 总线通信自检",
+    "result": "fail"
+  },
+  "observations": [
+    {
+      "id": "OBS-1",
+      "kind": "register",
+      "target": "CAN_A",
+      "at": "2026-09-28T15:05:48.520+08:00",
+      "capture_id": "CAP-A-ESR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_A.ESR",
+      "fields": {
+        "FLTCONF": "bus_off"
+      }
+    },
+    {
+      "id": "OBS-2",
+      "kind": "register",
+      "target": "CAN_A",
+      "at": "2026-09-28T15:05:48.523+08:00",
+      "capture_id": "CAP-A-CR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_A.CR",
+      "fields": {
+        "BOFFREC": 1
+      }
+    },
+    {
+      "id": "OBS-3",
+      "kind": "register",
+      "target": "CAN_B",
+      "at": "2026-09-28T15:05:48.526+08:00",
+      "capture_id": "CAP-B-ESR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_B.ESR",
+      "fields": {
+        "FLTCONF": "bus_off"
+      }
+    },
+    {
+      "id": "OBS-4",
+      "kind": "register",
+      "target": "CAN_B",
+      "at": "2026-09-28T15:05:48.529+08:00",
+      "capture_id": "CAP-B-CR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_B.CR",
+      "fields": {
+        "BOFFREC": 0
+      }
+    }
+  ],
+  "analysis": {
+    "fault_state": "confirmed",
+    "root_cause": "not_determined",
+    "confirmed_states": [
+      {
+        "id": "CAN_A/FC-BUSOFF-BOFFREC-DISABLED",
+        "statement": "CAN_A.CR 的 BOFFREC 位为 1 时禁用自动恢复，但该位对本次恢复的作用取决于进入总线关闭时的取值：进入总线关闭时该位已为 1 的，模块不会自动恢复，将保持该状态直至该位被清除；进入总线关闭时该位为 0、在总线关闭期间才置位的，对本次恢复无效，只在下一次进入总线关闭时生效。本结论只描述该配置位的作用与它生效的时点：不说明本次总线关闭是否已经发生，也不判断该配置是设计意图还是配置错误。",
+        "evidence": [
+          "OBS-2"
+        ],
+        "basis": {
+          "source": "MPC5554_RM",
+          "locator": "22.3.3.2, Table 22-8"
+        }
+      },
+      {
+        "id": "CAN_A/FC-BUSOFF-STATE",
+        "statement": "采集时刻 CAN_A 处于总线关闭（bus off）状态。本结论只描述该时刻的故障封闭状态：不说明总线关闭发生的时刻，不说明进入总线关闭前的错误类型分布，也不判断异常位于本节点还是总线上的其他节点。",
+        "evidence": [
+          "OBS-1"
+        ],
+        "basis": {
+          "source": "MPC5554_RM",
+          "locator": "22.3.3.6, Figure 22-8, Table 22-11"
+        }
+      },
+      {
+        "id": "CAN_A/FC-BUSOFF-NO-ACK-ONLY",
+        "statement": "进入总线关闭前的错误累积不可能仅来自无其他节点应答（ACK 错误）。本结论只排除「错误源仅为无应答」这一条路径：不排除总线上只有一个节点，单节点总线若同时存在位错误、填充错误等其他错误源，发送错误计数器仍可持续累积并进入总线关闭。",
+        "evidence": [
+          "OBS-1"
+        ],
+        "basis": {
+          "source": "MPC5554_RM",
+          "locator": "22.3.3.5"
+        }
+      },
+      {
+        "id": "CAN_B/FC-BUSOFF-BOFFREC-ENABLED",
+        "statement": "在 CAN_B.CR 的 BOFFREC 位为 0 期间，模块按 CAN 规范 2.0B 自动尝试从总线关闭恢复；恢复过程仍需总线上出现 128 次「11 个连续隐性位」。本结论只描述该配置位的作用：不说明总线关闭是否已经发生，不说明恢复需要多久，也不说明总线关闭的成因。",
+        "evidence": [
+          "OBS-4"
+        ],
+        "basis": {
+          "source": "MPC5554_RM",
+          "locator": "22.3.3.2, Table 22-8"
+        }
+      },
+      {
+        "id": "CAN_B/FC-BUSOFF-STATE",
+        "statement": "采集时刻 CAN_B 处于总线关闭（bus off）状态。本结论只描述该时刻的故障封闭状态：不说明总线关闭发生的时刻，不说明进入总线关闭前的错误类型分布，也不判断异常位于本节点还是总线上的其他节点。",
+        "evidence": [
+          "OBS-3"
+        ],
+        "basis": {
+          "source": "MPC5554_RM",
+          "locator": "22.3.3.6, Figure 22-8, Table 22-11"
+        }
+      },
+      {
+        "id": "CAN_B/FC-BUSOFF-NO-ACK-ONLY",
+        "statement": "进入总线关闭前的错误累积不可能仅来自无其他节点应答（ACK 错误）。本结论只排除「错误源仅为无应答」这一条路径：不排除总线上只有一个节点，单节点总线若同时存在位错误、填充错误等其他错误源，发送错误计数器仍可持续累积并进入总线关闭。",
+        "evidence": [
+          "OBS-3"
+        ],
+        "basis": {
+          "source": "MPC5554_RM",
+          "locator": "22.3.3.5"
+        }
+      }
+    ],
+    "candidate_causes": [],
+    "inconsistencies": [],
+    "insufficient_data": [],
+    "recommended_checks": [
+      "确认 CAN_A 与 CAN_B 的 BOFFREC 配置差异是否符合设计意图：CAN_A 的取值是否在进入总线关闭前已为 1，决定本次恢复是否被阻止",
+      "补充采集 CAN_A.ECR 与 CAN_B.ECR 的 TXECTR，并确保与各自的 FLTCONF 来自同一次寄存器读取，否则总线关闭期间 TXECTR 的语义无法确认"
+    ],
+    "unsupported": []
+  }
+}
