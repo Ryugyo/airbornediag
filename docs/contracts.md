@@ -144,7 +144,7 @@ Schema 中的对象均声明 `additionalProperties: false`，本版本未定义�
 
 Schema 是校验规则的唯一来源，跨文档检查不重复维护字段结构。检查内容为：观测 id 在一条记录内唯一、报告引用的观测 id 存在、结论引用的文献来源已登记、报告的 `device`/`test`/`observations` 与输入记录一致、`provenance.input_origin` 与输入记录的 `origin` 一致。
 
-这套检查有两处调用：`report` 子命令在输出报告前对本次报告自查（不合规即不输出），`scripts/validate_contracts.py` 对仓库内的示例与期望报告执行同一套检查，另加 `record_id` 在 `examples/` 内唯一、每个输入记录都有对应的期望报告。两处要求因此不会各自漂移。
+这套检查有两处调用：`report` 子命令在保存报告前对本次报告自查（不合规即不产出报告，既不落盘也不显示简述），`scripts/validate_contracts.py` 对仓库内的示例与期望报告执行同一套检查，另加 `record_id` 在 `examples/` 内唯一、每个输入记录都有对应的期望报告。两处要求因此不会各自漂移。
 
 期望报告（`tests/fixtures/`）中程序组装的部分（`confirmed_states`、`inconsistencies`、`insufficient_data`、`unsupported`、`fault_state`、`root_cause`）与实际工具输出一致；候选原因与检查建议是设计预期，不是某次模型回答的抄录。
 
