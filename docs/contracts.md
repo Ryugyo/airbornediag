@@ -126,6 +126,7 @@ Schema 中的对象均声明 `additionalProperties: false`，本版本未定义�
 
 1. **`confirmed_states` 的门槛是前提已满足**，而不是「结论比较有把握」。结论的适用边界写进 `statement` 语句本身，不另设条件字段。前提未被观测或无法确定的推断一律不得进入该数组，相关问题写入 `insufficient_data`。
 2. **`candidate_causes` 只引用观测**，即 `supporting` 与 `contradicting` 中只出现观测 id。首版不允许候选原因引用其他结论或彼此引用，避免多层交叉引用。没有案例证据支持的通用排查项不列为候选原因，放在 `recommended_checks`。
+   **`supporting` 至少一条**：契约要求候选原因必须由观测支持，`supporting` 为空数组的回答按不合规处理（解析器报错、Schema 用 `minItems: 1` 拦下），不静默降级为检查建议。这条只保证存在支持引用，**不表示该原因已被验证**。`candidate_causes` 本身仍允许为空数组——证据不足时可以不提出候选原因。
 3. **缺失信息只出现在 `insufficient_data`**，候选原因不含缺失信息字段，每项只有 `missing` 与 `reason`，`reason` 需说明该信息为何影响判断以及缺少它导致哪些内容无法判定。
 
 `confirmed_states` 的每项都带 `basis`（文献出处），`inconsistencies` 与 `insufficient_data` 的项**不带 `basis` 字段**：矛盾的判定依据与缺失项的判定依据都内联在各自的 `statement`/`reason` 文本里（含手册章节号）。这是本版的取舍，不是遗漏——为这两类补结构化依据字段属于破坏性变更，需要时按版本规则处理。
@@ -146,6 +147,8 @@ Schema 是校验规则的唯一来源，跨文档检查不重复维护字段结�
 这套检查有两处调用：`report` 子命令在输出报告前对本次报告自查（不合规即不输出），`scripts/validate_contracts.py` 对仓库内的示例与期望报告执行同一套检查，另加 `record_id` 在 `examples/` 内唯一、每个输入记录都有对应的期望报告。两处要求因此不会各自漂移。
 
 期望报告（`tests/fixtures/`）中程序组装的部分（`confirmed_states`、`inconsistencies`、`insufficient_data`、`unsupported`、`fault_state`、`root_cause`）与实际工具输出一致；候选原因与检查建议是设计预期，不是某次模型回答的抄录。
+
+**这一点在两处需要留意**：期望报告里的候选原因（如 `RPT-2026-0918-002` 的物理层异常、位定时不一致两条）**目前没有对应的知识条目支持**，按"知识与观测共同支持才提出"的口径在真实调用中无法复现（见 [development.md](development.md) 的"模型内容质量"）。它们是设计上期望出现的分析结果，不是当前知识库能支撑的结论；要补齐属于知识库覆盖范围的问题，未定。
 
 跨文件 `$ref`（报告契约引用输入契约的 `$defs`）由校验脚本预先读入本地 Schema 并注册到本地引用表解析，不访问网络。
 

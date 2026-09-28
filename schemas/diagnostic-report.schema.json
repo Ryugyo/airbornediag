@@ -164,8 +164,9 @@
         },
         "supporting": {
           "type": "array",
+          "minItems": 1,
           "items": { "type": "string", "minLength": 1 },
-          "description": "引用的观测 id。首版不引用其他结论或候选原因，避免多层交叉引用。"
+          "description": "引用的观测 id，至少一条。没有观测支持的排查项属于 recommended_checks，不列为候选原因。首版不引用其他结论或候选原因，避免多层交叉引用。"
         },
         "contradicting": {
           "type": "array",

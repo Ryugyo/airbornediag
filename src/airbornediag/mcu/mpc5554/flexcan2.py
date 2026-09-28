@@ -257,9 +257,14 @@ def analyse_target(view: RecordView, target: str) -> ToolResult:
                 ConfirmedState(
                     id="FC-BUSOFF-BOFFREC-DISABLED",
                     statement=(
-                        "在 {}.CR 的 BOFFREC 位为 1 期间，模块不会自动从总线关闭恢复，"
-                        "将保持该状态直至该位被清除。本结论只描述该配置位的作用："
-                        "不说明总线关闭是否已经发生，也不判断该配置是设计意图还是配置错误。".format(target)
+                        "{}.CR 的 BOFFREC 位为 1 时禁用自动恢复，"
+                        "但该位对本次恢复的作用取决于进入总线关闭时的取值："
+                        "进入总线关闭时该位已为 1 的，模块不会自动恢复，"
+                        "将保持该状态直至该位被清除；进入总线关闭时该位为 0、"
+                        "在总线关闭期间才置位的，对本次恢复无效，"
+                        "只在下一次进入总线关闭时生效。"
+                        "本结论只描述该配置位的作用与它生效的时点："
+                        "不说明本次总线关闭是否已经发生，也不判断该配置是设计意图还是配置错误。".format(target)
                     ),
                     evidence=boffrec.evidence,
                     basis=_BASIS_BOFFREC,

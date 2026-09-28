@@ -2,9 +2,11 @@
 
 分两部分：
 
-- 提示词：观测 id、工具确认的状态、缺失信息与知识条目都必须出现在提示词里，且规模
-  受 ``PROMPT_CHAR_LIMIT`` 控制，裁剪时在提示词内写明省略了多少条；
-- 解析：回答必须是约定的 JSON，引用的观测必须存在。不合规一律报错，不修补、不重试。
+- 提示词：观测 id、工具确认的状态、缺失信息与知识条目都必须完整出现在提示词里，
+  必要内容不截断、不省略；规模受 ``PROMPT_CHAR_LIMIT`` 控制，超限时只整条移除未被
+  工具结论引用的补充知识并在提示词内写明省略了多少条；
+- 解析：回答必须是约定的 JSON，引用的观测必须存在，候选原因至少要引用一条观测。
+  不合规一律报错，不修补、不重试。
 """
 
 from __future__ import annotations
@@ -188,35 +190,98 @@ def test_prompt_stays_within_the_character_limit() -> None:
     assert len(prompt) <= PROMPT_CHAR_LIMIT
 
 
-def test_trimming_drops_knowledge_first_and_says_how_many(
+def test_trimming_drops_only_unreferenced_knowledge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """裁剪顺序是知识条目 → 不支持项 → 缺失信息，且省略条数写在提示词里。"""
-    knowledge = [entry("E-{}".format(index), "正文" * 30) for index in range(6)]
+    """裁剪只整条移除未被工具结论引用的补充知识，省略条数写在提示词里。"""
+    referenced = entry("MPC5554-FlexCAN2-ESR-FLTCONF")
+    extras = [entry("E-{}".format(index), "正文" * 30) for index in range(6)]
     tool_result = result(
+        states=[state("FC-BUSOFF-STATE", "采集时刻 CAN_A 处于总线关闭状态。")],
         missing=[MissingItem("缺失项", "原因", BASIS)],
         unsupported=[UnsupportedItem("不支持项", "原因")],
     )
-    base = len(build_diagnosis_prompt(record(), tool_result, []))
-    # 上限取「只放得下前两条知识条目」的位置。
+    base = len(build_diagnosis_prompt(record(), tool_result, [referenced]))
+    # 上限取「被引用的知识放得下、补充知识只放得下前两条」的位置。
     monkeypatch.setattr(diag, "PROMPT_CHAR_LIMIT", base + 120)
 
-    prompt = build_diagnosis_prompt(record(), tool_result, knowledge)
+    prompt = build_diagnosis_prompt(record(), tool_result, [referenced] + extras)
     assert len(prompt) <= base + 120
     assert "省略了" in prompt and "知识条目" in prompt
-    # 知识条目被裁，不支持项与缺失信息仍在。
-    assert "不支持项" in prompt
+    # 被工具引用的知识是结论的依据，必须保留。
+    assert "MPC5554-FlexCAN2-ESR-FLTCONF" in prompt
+    # 状态、缺失信息与不支持项都不参与裁剪。
+    assert "采集时刻 CAN_A 处于总线关闭状态。" in prompt
     assert "缺失项" in prompt
+    assert "不支持项" in prompt
 
 
-def test_prompt_beyond_the_limit_without_anything_to_trim_is_an_error(
+def test_prompt_beyond_the_limit_with_only_referenced_knowledge_is_an_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """观测与工具结论本身超限时不截断观测，直接报错：截断会让模型引用不存在的证据。"""
+    """必要内容本身超限时直接报错，不继续删必要内容——截断会让模型引用不存在的证据。"""
+    monkeypatch.setattr(diag, "PROMPT_CHAR_LIMIT", 100)
+    tool_result = result(states=[state("FC-BUSOFF-STATE", "采集时刻处于总线关闭状态。")])
+    with pytest.raises(DiagnosisPromptError) as error:
+        build_diagnosis_prompt(
+            record([observation("OBS-1")]),
+            tool_result,
+            [entry("MPC5554-FlexCAN2-ESR-FLTCONF")],
+        )
+    assert "提示词上限" in str(error.value)
+    # 报错要说明必要内容不截断，而不是只说规模超了。
+    assert "不截断也不省略" in str(error.value)
+
+
+def test_prompt_beyond_the_limit_without_anything_left_to_trim_is_an_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """补充知识全部移除后仍超限时报错：观测与工具结论不参与裁剪。"""
     monkeypatch.setattr(diag, "PROMPT_CHAR_LIMIT", 100)
     with pytest.raises(DiagnosisPromptError) as error:
         build_diagnosis_prompt(record([observation("OBS-1")]), result(), [entry("E-1")])
     assert "提示词上限" in str(error.value)
+
+
+# --- 必要内容不截断、不省略 -------------------------------------------------
+
+
+def test_observation_content_is_not_truncated() -> None:
+    """单条观测的字段值原样列出：截断会让模型引用记录里并不存在的取值。"""
+    long_value = "数" * 500
+    prompt = build_diagnosis_prompt(
+        record([observation("OBS-1", fields={"FLTCONF": long_value})]), result(), []
+    )
+    assert long_value in prompt
+
+
+def test_every_observation_is_listed_with_content() -> None:
+    """观测条数不设上限：少给一条内容，模型就可能以为那条观测不存在。"""
+    observations = [
+        observation("OBS-{}".format(index), fields={"FLTCONF": "标记{}".format(index)})
+        for index in range(1, 41)
+    ]
+    prompt = build_diagnosis_prompt(record(observations), result(), [])
+    for index in range(1, 41):
+        assert "- OBS-{} ".format(index) in prompt
+        assert "标记{}".format(index) in prompt
+
+
+def test_every_confirmed_state_is_listed() -> None:
+    """确认状态条数不设上限：省略会让模型把已确认的结论当成待验证的原因重提。"""
+    states = [state("FC-STATE-{}".format(index), "结论{}。".format(index)) for index in range(1, 31)]
+    prompt = build_diagnosis_prompt(record(), result(states=states), [])
+    for index in range(1, 31):
+        assert "结论{}。".format(index) in prompt
+    assert "未列出" not in prompt
+
+
+def test_knowledge_body_is_not_truncated() -> None:
+    """知识正文按原文完整送出，不在句中或词中截断。"""
+    body = "正文" * 200 + "末尾"  # 远超原先的 240 字符上限
+    prompt = build_diagnosis_prompt(record(), result(), [entry("E-1", body)])
+    assert body in prompt
+    assert "…" not in prompt
 
 
 # --- 回答解析 ---------------------------------------------------------------
@@ -274,6 +339,32 @@ def test_empty_candidate_causes_are_allowed() -> None:
     )
     assert parsed.candidate_causes == ()
     assert parsed.recommended_checks == ("补充采集",)
+
+
+def test_candidate_cause_without_supporting_observation_is_rejected() -> None:
+    """候选原因必须引用观测；没有观测支持的排查项属于 recommended_checks。
+
+    这条只保证存在支持引用，不表示该原因已被验证。
+    """
+    text = json.dumps(
+        {
+            "candidate_causes": [
+                {"statement": "收发器供电异常", "supporting": [], "contradicting": []}
+            ],
+            "recommended_checks": [],
+        }
+    )
+    with pytest.raises(AnalysisOutputError) as error:
+        parse_analysis(text, ["OBS-1"])
+    assert "supporting" in str(error.value)
+    assert "至少一条观测" in str(error.value)
+    assert "recommended_checks" in str(error.value)
+
+
+def test_empty_recommended_checks_are_allowed() -> None:
+    """检查建议同样允许为空：没有可建议的内容时不编造。"""
+    parsed = parse_analysis(answer(recommended_checks=[]), ["OBS-1"])
+    assert parsed.recommended_checks == ()
 
 
 def test_fabricated_observation_reference_is_rejected() -> None:
