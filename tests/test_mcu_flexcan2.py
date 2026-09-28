@@ -44,6 +44,29 @@ def test_bus_off_confirms_state_without_claiming_root_cause() -> None:
     assert result.insufficient_data == ()
 
 
+def test_boffrec_disabled_statement_depends_on_when_it_was_set() -> None:
+    """BOFFREC=1 的结论按设置时机分情形描述，不把「一定阻止本次恢复」说成绝对。
+
+    工具只读到当前取值，看不到进入总线关闭时的取值，所以结论不能断言本次恢复被阻止。
+    """
+    result = analyse(
+        [
+            register("OBS-1", "CAN_A.ESR", {"FLTCONF": "bus_off"}, semantics="instantaneous"),
+            register("OBS-2", "CAN_A.CR", {"BOFFREC": 1}, semantics="instantaneous"),
+        ]
+    )
+    statement = next(
+        state.statement
+        for state in result.confirmed_states
+        if state.id == "FC-BUSOFF-BOFFREC-DISABLED"
+    )
+    # 设置时机是结论的适用条件，两种时机都要写出来。
+    assert "取决于进入总线关闭时的取值" in statement
+    assert "只在下一次进入总线关闭时生效" in statement
+    # 结论只描述该配置位的作用与生效时点，不说明本次是否已经发生总线关闭。
+    assert "不说明本次总线关闭是否已经发生" in statement
+
+
 def test_boffrec_zero_confirms_automatic_recovery_instead_of_disabled() -> None:
     """BOFFREC 为 0 时不给出「禁止自动恢复」的结论，只给出对应的那一条。"""
     result = analyse([register("OBS-1", "CAN_A.CR", {"BOFFREC": 0}, semantics="instantaneous")])

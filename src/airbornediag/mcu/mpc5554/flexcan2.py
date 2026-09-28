@@ -8,6 +8,12 @@
 按位解释原始值没有可核对的依据。
 
 缺失的信息一律作为缺失项返回，不跳过判据，也不补成正常取值。
+
+关于故障状态：手册 22.3.3.5 与 22.3.3.6 把 FLTCONF 的取值定义为故障封闭状态，其中
+bus off 与 error passive 是错误计数器累积到限值后的非正常状态，本模块把这两条结论
+标为 ``is_fault=True``；error active 是该机制中的正常工作状态，不标为故障。配置位的
+作用（BOFFREC）、工作模式（LOM）与读清除标志的快照都只是对已观测事实的确认，
+不构成故障状态。
 """
 
 from __future__ import annotations
@@ -251,9 +257,14 @@ def analyse_target(view: RecordView, target: str) -> ToolResult:
                 ConfirmedState(
                     id="FC-BUSOFF-BOFFREC-DISABLED",
                     statement=(
-                        "在 {}.CR 的 BOFFREC 位为 1 期间，模块不会自动从总线关闭恢复，"
-                        "将保持该状态直至该位被清除。本结论只描述该配置位的作用："
-                        "不说明总线关闭是否已经发生，也不判断该配置是设计意图还是配置错误。".format(target)
+                        "{}.CR 的 BOFFREC 位为 1 时禁用自动恢复，"
+                        "但该位对本次恢复的作用取决于进入总线关闭时的取值："
+                        "进入总线关闭时该位已为 1 的，模块不会自动恢复，"
+                        "将保持该状态直至该位被清除；进入总线关闭时该位为 0、"
+                        "在总线关闭期间才置位的，对本次恢复无效，"
+                        "只在下一次进入总线关闭时生效。"
+                        "本结论只描述该配置位的作用与它生效的时点："
+                        "不说明本次总线关闭是否已经发生，也不判断该配置是设计意图还是配置错误。".format(target)
                     ),
                     evidence=boffrec.evidence,
                     basis=_BASIS_BOFFREC,
@@ -302,6 +313,8 @@ def analyse_target(view: RecordView, target: str) -> ToolResult:
                 ),
                 evidence=fltconf.evidence,
                 basis=_BASIS_FLTCONF,
+                # 手册 22.3.3.5：错误计数器累积到限值后进入的故障封闭状态。
+                is_fault=True,
             )
         )
         states.append(
@@ -353,6 +366,8 @@ def analyse_target(view: RecordView, target: str) -> ToolResult:
                     ),
                     evidence=unique_in_order(list(fltconf.evidence) + list(lom.evidence)),
                     basis=_BASIS_FLTCONF,
+                    # 与 bus off 同属手册定义的故障封闭状态，只是程度较轻。
+                    is_fault=True,
                 )
             )
 

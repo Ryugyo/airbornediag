@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "AirborneDiag 故障记录（输入契约）",
-  "description": "格式版本 0.1.0。字段语义、缺失值约定与兼容性规则见 docs/contracts.md；首批诊断场景见 docs/scenarios.md。",
+  "description": "格式版本 0.1.1。字段语义、缺失值约定与兼容性规则见 docs/contracts.md；首批诊断场景见 docs/scenarios.md。",
   "type": "object",
   "required": ["schema_version", "record_id", "origin", "device", "test"],
   "properties": {
     "schema_version": {
-      "const": "0.1.0"
+      "const": "0.1.1"
     },
     "record_id": {
       "type": "string",
