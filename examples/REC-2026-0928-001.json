@@ -1,0 +1,29 @@
+{
+  "schema_version": "0.1.1",
+  "record_id": "REC-2026-0928-001",
+  "origin": "simulated",
+  "captured_at": "2026-09-28T09:14:02+08:00",
+  "device": {
+    "model": "MPC5554"
+  },
+  "test": {
+    "id": "PBIT-CAN-B-0031",
+    "target": "CAN_B",
+    "name": "CAN_B 总线通信自检",
+    "result": "fail"
+  },
+  "observations": [
+    {
+      "id": "OBS-1",
+      "kind": "register",
+      "target": "CAN_B",
+      "at": "2026-09-28T09:14:02.210+08:00",
+      "capture_id": "CAP-B-ESR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_B.ESR",
+      "fields": {
+        "FLTCONF": "error_passive"
+      }
+    }
+  ]
+}

@@ -80,6 +80,19 @@ def fixture(name: str) -> Dict[str, Any]:
     return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
 
 
+def expected_reports() -> Dict[str, Dict[str, Any]]:
+    """仓库内全部期望报告，按 record_ref 索引。"""
+    reports: Dict[str, Dict[str, Any]] = {}
+    for path in sorted(FIXTURES.glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        reports[data["record_ref"]] = data
+    return reports
+
+
+# examples/ 下的全部输入记录。新增案例时这里不用逐条登记，参数化会自动带上。
+RECORD_PATHS = sorted(EXAMPLES.glob("*.json"))
+
+
 def state_pairs(analysis: Dict[str, Any]) -> List[Any]:
     """按内容与证据比较状态，不比较映射后的 id 字面值。"""
     return [
@@ -142,6 +155,48 @@ def test_can_record_matches_the_expected_report(
     # 进度与检索情况走标准错误，不混进报告。
     assert "知识检索：" in captured.err
     assert "报告：报告标识 RPT-2026-0918-002，fault_state confirmed" in captured.err
+
+
+@pytest.mark.parametrize("record_path", RECORD_PATHS, ids=[path.name for path in RECORD_PATHS])
+def test_example_matches_its_expected_report(
+    record_path: Path, index: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """每个输入记录走完整流程，程序组装的部分与期望报告逐项一致。
+
+    与上面那条 REC-002 的用例分工不同：那条核对模型给出的文本如何进入报告，这条把
+    全部案例参数化起来，核对由程序决定的部分——状态、矛盾、缺失信息、不支持项与
+    fault_state。假服务返回空数组，因此候选原因与检查建议为空是预期结果，模型自由
+    文本不逐字比对。
+    """
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    expected = expected_reports()[record["record_id"]]["analysis"]
+
+    with fake_mindie(payload={"text": [answer()]}) as service:
+        code = run_report([str(record_path)], service.base_url, index)
+
+    captured = capsys.readouterr()
+    assert code == cli.EXIT_OK, captured.err
+    report = json.loads(captured.out)
+
+    # 回显三项由程序按输入记录的字段值保留，与期望报告、输入记录都一致。
+    assert report["report_id"] == "RPT-" + record["record_id"][len("REC-") :]
+    assert report["record_ref"] == record["record_id"]
+    assert report["provenance"] == {"input_origin": record["origin"], "report_status": "actual"}
+    assert report["device"] == record["device"]
+    assert report["test"] == record["test"]
+    assert report["observations"] == record.get("observations", [])
+
+    analysis = report["analysis"]
+    assert analysis["fault_state"] == expected["fault_state"]
+    assert analysis["inconsistencies"] == expected["inconsistencies"]
+    assert analysis["insufficient_data"] == expected["insufficient_data"]
+    assert analysis["unsupported"] == expected["unsupported"]
+    assert state_pairs(analysis) == state_pairs(expected)
+
+    # 假服务给的是空数组：没有候选原因时 root_cause 记为未判定。
+    assert analysis["candidate_causes"] == []
+    assert analysis["recommended_checks"] == []
+    assert analysis["root_cause"] == "not_determined"
 
 
 def test_tool_referenced_knowledge_reaches_the_model(
@@ -248,6 +303,44 @@ def test_extra_fields_in_the_answer_do_not_reach_the_report(
     assert code == cli.EXIT_OK
     assert "confidence" in captured.err
     assert "confidence" not in captured.out
+
+
+# --- 部分不支持与全部不支持 -------------------------------------------------
+
+
+def test_partially_unsupported_record_is_still_analysed(
+    index: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """有对象不支持、但也有对象能分析时照常分析，不支持项记进报告。"""
+    with fake_mindie(payload={"text": [answer()]}) as service:
+        code = run_report([str(EXAMPLES / "REC-2026-0928-008.json")], service.base_url, index)
+
+    captured = capsys.readouterr()
+    assert code == cli.EXIT_OK, captured.err
+    assert service.requests != []
+
+    unsupported = json.loads(captured.out)["analysis"]["unsupported"]
+    assert [item["subject"] for item in unsupported] == [
+        "CAN_A.ESR.FLTCONF 的取值",
+        "检测对象 CAN_D",
+        "寄存器原始值（OBS-2）",
+    ]
+
+
+def test_record_with_only_unsupported_targets_exits_unsupported(
+    index: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """全部对象都不支持时提前退出：没有工具结论，就不给模型凭空分析的机会。"""
+    path = write_record(tmp_path / "unsupported-target.json", make_record(target="CAN_D"))
+
+    with fake_mindie() as service:
+        code = run_report([str(path)], service.base_url, index)
+
+    captured = capsys.readouterr()
+    assert code == cli.EXIT_UNSUPPORTED
+    assert captured.out == ""
+    assert "未调用模型" in captured.err
+    assert service.requests == []
 
 
 # --- 关键失败路径 -----------------------------------------------------------

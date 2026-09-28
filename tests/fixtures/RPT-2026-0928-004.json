@@ -1,0 +1,69 @@
+{
+  "schema_version": "0.1.1",
+  "report_id": "RPT-2026-0928-004",
+  "record_ref": "REC-2026-0928-004",
+  "provenance": {
+    "input_origin": "simulated",
+    "report_status": "expected"
+  },
+  "device": {
+    "model": "MPC5554"
+  },
+  "test": {
+    "id": "PBIT-CAN-C-0018",
+    "target": "CAN_C",
+    "name": "CAN_C 总线通信自检",
+    "result": "fail"
+  },
+  "observations": [
+    {
+      "id": "OBS-1",
+      "kind": "register",
+      "target": "CAN_C",
+      "at": "2026-09-28T11:03:19.070+08:00",
+      "capture_id": "CAP-C-CR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_C.CR",
+      "fields": {
+        "LOM": 1
+      }
+    },
+    {
+      "id": "OBS-2",
+      "kind": "register",
+      "target": "CAN_C",
+      "at": "2026-09-28T11:03:19.073+08:00",
+      "capture_id": "CAP-C-ESR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_C.ESR",
+      "fields": {
+        "FLTCONF": "error_passive"
+      }
+    }
+  ],
+  "analysis": {
+    "fault_state": "not_determined",
+    "root_cause": "not_determined",
+    "confirmed_states": [
+      {
+        "id": "CAN_C/FC-LOM-MODE",
+        "statement": "CAN_C.CR 的 LOM 为 1，模块处于只听模式：以 CAN 错误被动方式工作、冻结全部错误计数器、接收报文但不发送应答，且无法发送任何报文。本结论只说明该配置位与工作模式，不说明该配置的成因。",
+        "evidence": [
+          "OBS-1"
+        ],
+        "basis": {
+          "source": "MPC5554_RM",
+          "locator": "22.3.3.2, Table 22-8"
+        }
+      }
+    ],
+    "candidate_causes": [],
+    "inconsistencies": [],
+    "insufficient_data": [],
+    "recommended_checks": [
+      "确认 CAN_C.CR 的 LOM 置位是否符合设计意图：只听模式下模块冻结全部错误计数器、不发送应答且无法发送任何报文",
+      "注意 LOM 不受软复位影响，不能靠软复位清除该配置，需按 CANx_CR 的写入时机要求清除"
+    ],
+    "unsupported": []
+  }
+}

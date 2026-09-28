@@ -1,0 +1,83 @@
+{
+  "schema_version": "0.1.1",
+  "report_id": "RPT-2026-0928-003",
+  "record_ref": "REC-2026-0928-003",
+  "provenance": {
+    "input_origin": "simulated",
+    "report_status": "expected"
+  },
+  "device": {
+    "model": "MPC5554"
+  },
+  "test": {
+    "id": "PBIT-CAN-A-0043",
+    "target": "CAN_A",
+    "name": "CAN_A 总线通信自检",
+    "result": "fail"
+  },
+  "observations": [
+    {
+      "id": "OBS-1",
+      "kind": "register",
+      "target": "CAN_A",
+      "at": "2026-09-28T10:26:07.340+08:00",
+      "capture_id": "CAP-A-ESR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_A.ESR",
+      "fields": {
+        "FLTCONF": "error_active"
+      }
+    },
+    {
+      "id": "OBS-2",
+      "kind": "register",
+      "target": "CAN_A",
+      "at": "2026-09-28T10:26:07.343+08:00",
+      "capture_id": "CAP-A-ESR-2",
+      "semantics": "since_last_read",
+      "covers_since": "2026-09-28T09:00:00+08:00",
+      "register": "CAN_A.ESR",
+      "fields": {
+        "BIT1ERR": 0,
+        "ACKERR": 1,
+        "STFERR": 1
+      }
+    }
+  ],
+  "analysis": {
+    "fault_state": "not_determined",
+    "root_cause": "not_determined",
+    "confirmed_states": [
+      {
+        "id": "CAN_A/FC-ERROR-ACTIVE-STATE",
+        "statement": "采集时刻 CAN_A 处于错误主动（error active）状态。本结论只描述该时刻的故障封闭状态，不代表该外设工作正常，也不代表检测通过。",
+        "evidence": [
+          "OBS-1"
+        ],
+        "basis": {
+          "source": "MPC5554_RM",
+          "locator": "22.3.3.6, Figure 22-8, Table 22-11"
+        }
+      },
+      {
+        "id": "CAN_A/FC-ESR-FLAG-SNAPSHOT",
+        "statement": "在2026-09-28T09:00:00+08:00 至该次读取之间，CAN_A.ESR 记录了以下错误条件：ACKERR、STFERR。这些位为读清除位，本次读取动作已将其清除，因此该快照只覆盖上述区间，不能说明当前是否仍在发生同类错误；本次未观测的其它位域仍为未知，本结论不代表该外设工作正常。",
+        "evidence": [
+          "OBS-2"
+        ],
+        "basis": {
+          "source": "MPC5554_RM",
+          "locator": "22.3.3.6, Figure 22-8, Table 22-11"
+        }
+      }
+    ],
+    "candidate_causes": [],
+    "inconsistencies": [],
+    "insufficient_data": [],
+    "recommended_checks": [
+      "补充采集 CAN_A.ECR 的 TXECTR 与 RXECTR，判断错误计数器是否在向错误被动的方向累积",
+      "记录下一次读取 CAN_A.ESR 的时刻，使下一个错误标志快照的覆盖区间与本次连续"
+    ],
+    "unsupported": []
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "schema_version": "0.1.1",
+  "record_id": "REC-2026-0928-003",
+  "origin": "simulated",
+  "captured_at": "2026-09-28T10:26:07+08:00",
+  "device": {
+    "model": "MPC5554"
+  },
+  "test": {
+    "id": "PBIT-CAN-A-0043",
+    "target": "CAN_A",
+    "name": "CAN_A 总线通信自检",
+    "result": "fail"
+  },
+  "observations": [
+    {
+      "id": "OBS-1",
+      "kind": "register",
+      "target": "CAN_A",
+      "at": "2026-09-28T10:26:07.340+08:00",
+      "capture_id": "CAP-A-ESR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_A.ESR",
+      "fields": {
+        "FLTCONF": "error_active"
+      }
+    },
+    {
+      "id": "OBS-2",
+      "kind": "register",
+      "target": "CAN_A",
+      "at": "2026-09-28T10:26:07.343+08:00",
+      "capture_id": "CAP-A-ESR-2",
+      "semantics": "since_last_read",
+      "covers_since": "2026-09-28T09:00:00+08:00",
+      "register": "CAN_A.ESR",
+      "fields": {
+        "BIT1ERR": 0,
+        "ACKERR": 1,
+        "STFERR": 1
+      }
+    }
+  ]
+}

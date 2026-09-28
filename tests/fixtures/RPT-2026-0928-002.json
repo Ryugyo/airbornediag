@@ -1,0 +1,70 @@
+{
+  "schema_version": "0.1.1",
+  "report_id": "RPT-2026-0928-002",
+  "record_ref": "REC-2026-0928-002",
+  "provenance": {
+    "input_origin": "simulated",
+    "report_status": "expected"
+  },
+  "device": {
+    "model": "MPC5554"
+  },
+  "test": {
+    "id": "PBIT-CAN-A-0042",
+    "target": "CAN_A",
+    "name": "CAN_A 总线通信自检",
+    "result": "fail"
+  },
+  "observations": [
+    {
+      "id": "OBS-1",
+      "kind": "register",
+      "target": "CAN_A",
+      "at": "2026-09-28T10:02:41.115+08:00",
+      "capture_id": "CAP-A-ESR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_A.ESR",
+      "fields": {
+        "FLTCONF": "error_passive"
+      }
+    },
+    {
+      "id": "OBS-2",
+      "kind": "register",
+      "target": "CAN_A",
+      "at": "2026-09-28T10:02:41.118+08:00",
+      "capture_id": "CAP-A-CR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_A.CR",
+      "fields": {
+        "LOM": 0
+      }
+    }
+  ],
+  "analysis": {
+    "fault_state": "confirmed",
+    "root_cause": "not_determined",
+    "confirmed_states": [
+      {
+        "id": "CAN_A/FC-ERROR-PASSIVE-STATE",
+        "statement": "CAN_A 处于错误被动（error passive）状态。本结论以 CAN_A.CR 的 LOM 为 0 为前提：LOM 置位时 FLTCONF 同样显示为错误被动，缺少 LOM 时该状态不可判定。本结论不说明进入错误被动的原因，也不说明错误计数器此后的变化方向。",
+        "evidence": [
+          "OBS-1",
+          "OBS-2"
+        ],
+        "basis": {
+          "source": "MPC5554_RM",
+          "locator": "22.3.3.6, Figure 22-8, Table 22-11"
+        }
+      }
+    ],
+    "candidate_causes": [],
+    "inconsistencies": [],
+    "insufficient_data": [],
+    "recommended_checks": [
+      "补充采集 CAN_A.ECR 的 TXECTR 与 RXECTR：错误被动由错误计数器累积到限值进入，本次未观测计数器，其当前取值与变化方向未知",
+      "按读清除语义补充采集 CAN_A.ESR 的错误标志位（BIT1ERR、BIT0ERR、ACKERR、CRCERR、FRMERR、STFERR）并给出 covers_since，以判断错误累积的方向"
+    ],
+    "unsupported": []
+  }
+}

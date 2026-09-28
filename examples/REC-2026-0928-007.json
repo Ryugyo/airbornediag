@@ -1,0 +1,65 @@
+{
+  "schema_version": "0.1.1",
+  "record_id": "REC-2026-0928-007",
+  "origin": "simulated",
+  "captured_at": "2026-09-28T15:05:48+08:00",
+  "device": {
+    "model": "MPC5554"
+  },
+  "test": {
+    "id": "PBIT-CAN-A-0044",
+    "target": "CAN_A",
+    "name": "CAN_A 与 CAN_B 总线通信自检",
+    "result": "fail"
+  },
+  "observations": [
+    {
+      "id": "OBS-1",
+      "kind": "register",
+      "target": "CAN_A",
+      "at": "2026-09-28T15:05:48.520+08:00",
+      "capture_id": "CAP-A-ESR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_A.ESR",
+      "fields": {
+        "FLTCONF": "bus_off"
+      }
+    },
+    {
+      "id": "OBS-2",
+      "kind": "register",
+      "target": "CAN_A",
+      "at": "2026-09-28T15:05:48.523+08:00",
+      "capture_id": "CAP-A-CR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_A.CR",
+      "fields": {
+        "BOFFREC": 1
+      }
+    },
+    {
+      "id": "OBS-3",
+      "kind": "register",
+      "target": "CAN_B",
+      "at": "2026-09-28T15:05:48.526+08:00",
+      "capture_id": "CAP-B-ESR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_B.ESR",
+      "fields": {
+        "FLTCONF": "bus_off"
+      }
+    },
+    {
+      "id": "OBS-4",
+      "kind": "register",
+      "target": "CAN_B",
+      "at": "2026-09-28T15:05:48.529+08:00",
+      "capture_id": "CAP-B-CR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_B.CR",
+      "fields": {
+        "BOFFREC": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,81 @@
+{
+  "schema_version": "0.1.1",
+  "report_id": "RPT-2026-0928-008",
+  "record_ref": "REC-2026-0928-008",
+  "provenance": {
+    "input_origin": "simulated",
+    "report_status": "expected"
+  },
+  "device": {
+    "model": "MPC5554"
+  },
+  "test": {
+    "id": "PBIT-CAN-A-0045",
+    "target": "CAN_A",
+    "name": "CAN_A 总线通信自检",
+    "result": "fail"
+  },
+  "observations": [
+    {
+      "id": "OBS-1",
+      "kind": "register",
+      "target": "CAN_A",
+      "at": "2026-09-28T15:41:26.140+08:00",
+      "capture_id": "CAP-A-ESR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_A.ESR",
+      "fields": {
+        "FLTCONF": 2
+      }
+    },
+    {
+      "id": "OBS-2",
+      "kind": "register",
+      "target": "CAN_A",
+      "at": "2026-09-28T15:41:26.143+08:00",
+      "capture_id": "CAP-A-ECR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_A.ECR",
+      "value": 1073741824
+    },
+    {
+      "id": "OBS-3",
+      "kind": "register",
+      "target": "CAN_D",
+      "at": "2026-09-28T15:41:26.146+08:00",
+      "capture_id": "CAP-D-ESR-1",
+      "semantics": "instantaneous",
+      "register": "CAN_D.ESR",
+      "fields": {
+        "FLTCONF": "bus_off"
+      }
+    }
+  ],
+  "analysis": {
+    "fault_state": "not_determined",
+    "root_cause": "not_determined",
+    "confirmed_states": [],
+    "candidate_causes": [],
+    "inconsistencies": [],
+    "insufficient_data": [],
+    "recommended_checks": [
+      "按本版接受的写法重新采集 CAN_A.ESR 的 FLTCONF（bus_off/bus-off/1x、error_passive/error-passive/01、error_active/error-active/00）",
+      "CAN_A.ECR 的观测需给出已解码的位域；只提供原始寄存器值的观测本版不解析",
+      "确认 CAN_D 是否应为 CAN_A 或 CAN_B：本版按手册 22.1 只处理 MPC5554 的三个 FlexCAN2 实例 CAN_A、CAN_B、CAN_C"
+    ],
+    "unsupported": [
+      {
+        "subject": "CAN_A.ESR.FLTCONF 的取值",
+        "reason": "本版不把原始取值当作整数按位解释，FLTCONF 只接受手册编码与符号名这几组写法：bus_off/bus-off/1x、error_passive/error-passive/01、error_active/error-active/00（大小写不敏感）。手册中属于 1X 的其它位组合（10、11）本版尚未实现，同样报为不支持。该取值不在支持的写法内，因此不参与判断：不支持表示本版没有依据，不等于该字段未观测，也不等于取值正常。"
+      },
+      {
+        "subject": "检测对象 CAN_D",
+        "reason": "本版 MPC5554 的工具只处理手册确认存在的模块实例（CAN_A、CAN_B、CAN_C、DSPI_A、DSPI_B、DSPI_C、DSPI_D）。该对象不在其中，没有对应判据，因此不参与判断。不支持表示本版没有依据，不等于该对象正常。"
+      },
+      {
+        "subject": "寄存器原始值（OBS-2）",
+        "reason": "本版不解析寄存器原始值：位编号尚未逐条核对手册入知识库，按位解释没有可核对的依据。只提供 value、没有已解码位域的寄存器观测不参与判断。"
+      }
+    ]
+  }
+}

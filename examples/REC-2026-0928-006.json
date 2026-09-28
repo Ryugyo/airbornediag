@@ -1,0 +1,55 @@
+{
+  "schema_version": "0.1.1",
+  "record_id": "REC-2026-0928-006",
+  "origin": "simulated",
+  "captured_at": "2026-09-28T14:12:33+08:00",
+  "device": {
+    "model": "MPC5554"
+  },
+  "test": {
+    "id": "PBIT-DSPI-D-0009",
+    "target": "DSPI_D",
+    "name": "DSPI_D 回环自检",
+    "result": "fail"
+  },
+  "observations": [
+    {
+      "id": "OBS-1",
+      "kind": "register",
+      "target": "DSPI_D",
+      "at": "2026-09-28T14:12:33.205+08:00",
+      "capture_id": "CAP-D-MCR-1",
+      "semantics": "instantaneous",
+      "register": "DSPI_D.MCR",
+      "fields": {
+        "MSTR": 1
+      }
+    },
+    {
+      "id": "OBS-2",
+      "kind": "register",
+      "target": "DSPI_D",
+      "at": "2026-09-28T14:12:33.208+08:00",
+      "capture_id": "CAP-D-SR-1",
+      "semantics": "since_last_read",
+      "covers_since": "2026-09-28T13:30:00+08:00",
+      "register": "DSPI_D.SR",
+      "fields": {
+        "TFUF": 1,
+        "RFOF": 1
+      }
+    },
+    {
+      "id": "OBS-3",
+      "kind": "register",
+      "target": "DSPI_D",
+      "at": "2026-09-28T14:12:33.208+08:00",
+      "capture_id": "CAP-D-SR-1",
+      "semantics": "instantaneous",
+      "register": "DSPI_D.SR",
+      "fields": {
+        "TXRXS": 0
+      }
+    }
+  ]
+}

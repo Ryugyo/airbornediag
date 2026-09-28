@@ -1,0 +1,108 @@
+{
+  "schema_version": "0.1.1",
+  "report_id": "RPT-2026-0928-006",
+  "record_ref": "REC-2026-0928-006",
+  "provenance": {
+    "input_origin": "simulated",
+    "report_status": "expected"
+  },
+  "device": {
+    "model": "MPC5554"
+  },
+  "test": {
+    "id": "PBIT-DSPI-D-0009",
+    "target": "DSPI_D",
+    "name": "DSPI_D 回环自检",
+    "result": "fail"
+  },
+  "observations": [
+    {
+      "id": "OBS-1",
+      "kind": "register",
+      "target": "DSPI_D",
+      "at": "2026-09-28T14:12:33.205+08:00",
+      "capture_id": "CAP-D-MCR-1",
+      "semantics": "instantaneous",
+      "register": "DSPI_D.MCR",
+      "fields": {
+        "MSTR": 1
+      }
+    },
+    {
+      "id": "OBS-2",
+      "kind": "register",
+      "target": "DSPI_D",
+      "at": "2026-09-28T14:12:33.208+08:00",
+      "capture_id": "CAP-D-SR-1",
+      "semantics": "since_last_read",
+      "covers_since": "2026-09-28T13:30:00+08:00",
+      "register": "DSPI_D.SR",
+      "fields": {
+        "TFUF": 1,
+        "RFOF": 1
+      }
+    },
+    {
+      "id": "OBS-3",
+      "kind": "register",
+      "target": "DSPI_D",
+      "at": "2026-09-28T14:12:33.208+08:00",
+      "capture_id": "CAP-D-SR-1",
+      "semantics": "instantaneous",
+      "register": "DSPI_D.SR",
+      "fields": {
+        "TXRXS": 0
+      }
+    }
+  ],
+  "analysis": {
+    "fault_state": "not_determined",
+    "root_cause": "not_determined",
+    "confirmed_states": [
+      {
+        "id": "DSPI_D/DS-RFOF-OVERFLOW",
+        "statement": "DSPI_D 的 RX FIFO 发生了溢出：RX FIFO 与移位寄存器都已满时，又发起了一次传输。本结论只说明溢出发生，不说明受影响数据的内容与数量。",
+        "evidence": [
+          "OBS-2"
+        ],
+        "basis": {
+          "source": "MPC5554_RM",
+          "locator": "20.3.2.4, Table 20-6"
+        }
+      },
+      {
+        "id": "DSPI_D/DS-TX-RX-RUN-STATE",
+        "statement": "DSPI_D 的 TX/RX 操作被禁用，采集时刻处于 STOPPED 状态；该状态下主模式不发起任何传输、从模式不应答任何传输。本结论只说明运行状态，不说明该状态是否符合预期，也不说明检测结论的成因。",
+        "evidence": [
+          "OBS-3"
+        ],
+        "basis": {
+          "source": "MPC5554_RM",
+          "locator": "20.3.2.4, Table 20-6; 20.4.2, Table 20-17"
+        }
+      }
+    ],
+    "candidate_causes": [],
+    "inconsistencies": [
+      {
+        "id": "DSPI_D/DS-TFUF-MODE-CONFLICT",
+        "statement": "DSPI_D.SR 的 TFUF 置位表示发生了发送 FIFO 下溢，但依据 Table 20-6，该下溢条件仅对工作在 SPI 从模式的 DSPI 检测；DSPI_D.MCR 的 MSTR 为 1 表示主机模式。两者不能同时成立，属输入自相矛盾。在矛盾澄清之前，本工具不给出任何依赖 TFUF 与 MSTR 的状态结论；同一次读取中不依赖这两个字段的判据不受影响。",
+        "evidence": [
+          "OBS-2",
+          "OBS-1"
+        ]
+      }
+    ],
+    "insufficient_data": [
+      {
+        "missing": "澄清 TFUF 与 MSTR 矛盾所需的证据",
+        "reason": "在矛盾澄清之前，本工具不给出任何依赖 TFUF 与 MSTR 的状态结论。同一次读取中不依赖这两个字段、证据独立的判据（RX FIFO 溢出、TX/RX 运行状态）仍然成立；但该次读取整体是否自洽尚未确认。"
+      }
+    ],
+    "recommended_checks": [
+      "先澄清矛盾：确认 DSPI_D 实际工作在主机模式还是从模式，并在同一次读取中重采 DSPI_D.MCR 的 MSTR 与 DSPI_D.SR 的 TFUF",
+      "记录 TXRXS 由 RUNNING 转入 STOPPED 的时刻与原因（EOQF、HALT 或调试模式 FRZ），以确认本次读取时的运行状态是否与自检预期一致"
+    ],
+    "unsupported": []
+  }
+}
